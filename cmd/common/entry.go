@@ -2,51 +2,17 @@ package common
 
 import (
 	"errors"
-	"github.com/foomo/contentful"
 	"log"
+
+	"github.com/foomo/contentful"
 )
 
 func EntryExistsByID(cma *contentful.Contentful, spaceID, entryID string) bool {
-	collection := cma.Entries.List(spaceID)
-	collection.Query.SysID(entryID)
-	var err error
-	collection, err = collection.Next()
+	entry, err := cma.Entries.Get(spaceID, entryID)
 	if err != nil {
 		log.Fatalf("could not check if new entry ID is already taken: %v", err)
 	}
-	if collection != nil && len(collection.Items) > 0 {
-		return true
-	}
-	return false
-}
-
-func GetEntryByID(cma *contentful.Contentful, spaceID, entryID string) (*contentful.Entry, error) {
-	collection := cma.Entries.List(spaceID)
-	collection.Query.SysID(entryID)
-	var err error
-	collection, err = collection.Next()
-	if err != nil {
-		return nil, err
-	}
-	convertedEntries := collection.ToEntry()
-	if len(convertedEntries) == 0 {
-		return nil, errors.New("GetEntryByID could not convert collection to entries")
-	}
-	return convertedEntries[0], nil
-}
-func MustGetEntryByID(cma *contentful.Contentful, spaceID, entryID string) *contentful.Entry {
-	collection := cma.Entries.List(spaceID)
-	collection.Query.SysID(entryID)
-	var err error
-	collection, err = collection.Next()
-	if err != nil {
-		log.Fatalf("entry with ID %v not found", entryID)
-	}
-	convertedEntries := collection.ToEntry()
-	if len(convertedEntries) != 1 {
-		log.Fatalf("got %d entries", len(convertedEntries))
-	}
-	return convertedEntries[0]
+	return entry != nil
 }
 
 func GetEntriesLinkingToThis(cma *contentful.Contentful, spaceID, entryID string) ([]*contentful.Entry, error) {
@@ -78,7 +44,7 @@ func SmartUpdateEntry(entry *contentful.Entry, refEntry *contentful.Entry, cma *
 	}
 	log.Printf("Entry %s was updated", entry.Sys.ID)
 	if wasPublished {
-		updatedEntry, err := GetEntryByID(cma, spaceID, entry.Sys.ID)
+		updatedEntry, err := cma.Entries.Get(spaceID, entry.Sys.ID)
 		if err != nil {
 			return err
 		}

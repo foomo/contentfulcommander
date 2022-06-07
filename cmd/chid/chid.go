@@ -2,10 +2,11 @@ package chid
 
 import (
 	"encoding/json"
-	"example.com/contentfulcommander/cmd/common"
-	"example.com/contentfulcommander/contentfulclient"
-	"github.com/foomo/contentful"
 	"log"
+
+	"github.com/foomo/contentful"
+	"github.com/foomo/contentfulcommander/cmd/common"
+	"github.com/foomo/contentfulcommander/contentfulclient"
 )
 
 func Run(cma *contentful.Contentful, params []string) error {
@@ -13,7 +14,10 @@ func Run(cma *contentful.Contentful, params []string) error {
 	cma.Environment = environment
 	oldID := params[1]
 	newID := params[2]
-	oldEntry := common.MustGetEntryByID(cma, spaceID, oldID)
+	oldEntry, err := cma.Entries.Get(spaceID, oldID)
+	if err != nil {
+		log.Fatal("Could not get old entry from space")
+	}
 	if common.EntryExistsByID(cma, spaceID, newID) {
 		log.Fatal("An entry with the new ID supplied already exists")
 	}
@@ -105,5 +109,22 @@ func Run(cma *contentful.Contentful, params []string) error {
 	}
 	log.Printf("New entry: https://app.contentful.com/spaces/%s/environments/%s/entries/%s", spaceID, cma.Environment, newEntry.Sys.ID)
 	log.Printf("Old entry: https://app.contentful.com/spaces/%s/environments/%s/entries/%s", spaceID, cma.Environment, oldEntry.Sys.ID)
+	oldEntry, err = cma.Entries.Get(spaceID, oldEntry.Sys.ID)
+	if err != nil {
+		log.Fatalf("Error getting old entry for unpublishing: %v", err)
+	}
+	err = cma.Entries.Unpublish(spaceID,oldEntry)
+	if err != nil {
+		log.Fatalf("Error unpublishing old entry: %v", err)
+	}
+	oldEntry, err = cma.Entries.Get(spaceID, oldEntry.Sys.ID)
+	if err != nil {
+		log.Fatalf("Error getting old entry for archiving: %v", err)
+	}
+	err = cma.Entries.Archive(spaceID,oldEntry)
+	if err != nil {
+		log.Fatalf("Error archiving old entry: %v", err)
+	}
+	log.Print("Old entry was archived. All done.")
 	return nil
 }

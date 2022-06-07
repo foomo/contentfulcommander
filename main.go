@@ -1,12 +1,13 @@
 package main
 
 import (
-	"example.com/contentfulcommander/cmd/chid"
-	"example.com/contentfulcommander/contentfulclient"
-	"example.com/contentfulcommander/help"
 	"flag"
 	"log"
 	"os"
+
+	"github.com/foomo/contentfulcommander/cmd/chid"
+	"github.com/foomo/contentfulcommander/contentfulclient"
+	"github.com/foomo/contentfulcommander/help"
 )
 
 var VERSION = "v0.0.1"
