@@ -9,7 +9,7 @@ and maintenance of Contentful spaces.
 Build your own binary or, if you trust us install it using Homebrew:
 
 ```
-brew install foomo/gocontentful/gocontentful
+brew install foomo/contentfulcommander/contentfulcommander
 ```
 
 ## Usage
