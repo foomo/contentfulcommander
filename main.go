@@ -4,9 +4,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/foomo/contentfulcommander/cmd/modeldiff"
 	"log"
 	"os"
+
+	"github.com/foomo/contentfulcommander/cmd/modeldiff"
 
 	"github.com/foomo/contentfulcommander/cmd/chid"
 	"github.com/foomo/contentfulcommander/contentfulclient"
@@ -32,7 +33,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
 }
 
 func ensureExtraParams(command string, params []string, size int) {

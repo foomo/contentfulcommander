@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/foomo/contentful"
-	"github.com/foomo/contentfulcommander/contentfulclient"
-	"github.com/foomo/contentfulcommander/model"
 	"sort"
 	"strings"
+
+	"github.com/foomo/contentful"
+
+	"github.com/foomo/contentfulcommander/contentfulclient"
+	"github.com/foomo/contentfulcommander/model"
 )
 
 func Run(cma *contentful.Contentful, params []string) error {
-
 	firstSpace, firstEnvironment := contentfulclient.GetSpaceAndEnvironment(params[0])
 	if firstSpace == "" {
 		return errors.New("firstspace ID is empty")
@@ -77,27 +78,24 @@ func getContentTypes(cma *contentful.Contentful, spaceID, environment string) (c
 }
 
 func diffContentTypes(firstSpaceName, secondSpaceName string, firstSpaceContentTypes, secondSpaceContentTypes []model.ContentType) {
-
 	firstContentTypeMap,
 		secondContentTypeMap,
 		firstOnlyTypes,
 		secondOnlyTypes,
 		_,
-		sortedTypes :=
-		sliceElementsCompare(firstSpaceContentTypes, secondSpaceContentTypes,
-			func(contentType model.ContentType) string {
-				return contentType.Sys.ID
-			})
+		sortedTypes := sliceElementsCompare(firstSpaceContentTypes, secondSpaceContentTypes,
+		func(contentType model.ContentType) string {
+			return contentType.Sys.ID
+		})
 
-	const contentTypeHeader = "Content Type: '%s' %s\n"
 	for _, contentTypeID := range sortedTypes {
 		if _, ok := firstOnlyTypes[contentTypeID]; ok {
-			_ = printContentTypeHeader(contentTypeHeader, contentTypeID, false)
+			_ = printContentTypeHeader(contentTypeID, false)
 			fmt.Printf("AAA ___ content type only available in %s\n", firstSpaceName)
 			continue
 		}
 		if _, ok := secondOnlyTypes[contentTypeID]; ok {
-			_ = printContentTypeHeader(contentTypeHeader, contentTypeID, false)
+			_ = printContentTypeHeader(contentTypeID, false)
 			fmt.Printf("___ BBB content type only available in %s\n", secondSpaceName)
 			continue
 		}
@@ -105,7 +103,7 @@ func diffContentTypes(firstSpaceName, secondSpaceName string, firstSpaceContentT
 		secondContentType := secondContentTypeMap[contentTypeID]
 		contentTypeHeaderAlreadyPrinted := false
 		if firstContentType.Name != secondContentType.Name {
-			contentTypeHeaderAlreadyPrinted = printContentTypeHeader(contentTypeHeader, contentTypeID, contentTypeHeaderAlreadyPrinted)
+			contentTypeHeaderAlreadyPrinted = printContentTypeHeader(contentTypeID, contentTypeHeaderAlreadyPrinted)
 			fmt.Printf("AAA BBB Name is different\n")
 			fmt.Printf(" ^   ^----B: %s\n", firstContentType.Name)
 			fmt.Printf(" ^--------A: %s\n", secondContentType.Name)
@@ -123,19 +121,18 @@ func diffContentTypes(firstSpaceName, secondSpaceName string, firstSpaceContentT
 			firstOnlyFields,
 			secondOnlyFields,
 			_,
-			sortedFields :=
-			sliceElementsCompare(firstFields, secondFields,
-				func(field model.ContentTypeField) string {
-					return field.ID
-				})
+			sortedFields := sliceElementsCompare(firstFields, secondFields,
+			func(field model.ContentTypeField) string {
+				return field.ID
+			})
 		for _, fieldID := range sortedFields {
 			if _, ok := firstOnlyFields[fieldID]; ok {
-				contentTypeHeaderAlreadyPrinted = printContentTypeHeader(contentTypeHeader, contentTypeID, contentTypeHeaderAlreadyPrinted)
+				contentTypeHeaderAlreadyPrinted = printContentTypeHeader(contentTypeID, contentTypeHeaderAlreadyPrinted)
 				fmt.Printf("    AAA ___ field '%s' only available in %s\n", fieldID, firstSpaceName)
 				continue
 			}
 			if _, ok := secondOnlyFields[fieldID]; ok {
-				contentTypeHeaderAlreadyPrinted = printContentTypeHeader(contentTypeHeader, contentTypeID, contentTypeHeaderAlreadyPrinted)
+				contentTypeHeaderAlreadyPrinted = printContentTypeHeader(contentTypeID, contentTypeHeaderAlreadyPrinted)
 				fmt.Printf("    ___ BBB field '%s' only available in %s\n", fieldID, firstSpaceName)
 				continue
 			}
@@ -143,7 +140,7 @@ func diffContentTypes(firstSpaceName, secondSpaceName string, firstSpaceContentT
 			secondField := secondContentTypeFieldMap[fieldID]
 			fieldHeaderAlreadyPrinted := false
 			printHeaders := func() {
-				contentTypeHeaderAlreadyPrinted = printContentTypeHeader(contentTypeHeader, contentTypeID, contentTypeHeaderAlreadyPrinted)
+				contentTypeHeaderAlreadyPrinted = printContentTypeHeader(contentTypeID, contentTypeHeaderAlreadyPrinted)
 				fieldHeaderAlreadyPrinted = printFieldHeader(fieldID, fieldHeaderAlreadyPrinted)
 			}
 			if firstField.Name != secondField.Name {
@@ -174,14 +171,14 @@ func diffContentTypes(firstSpaceName, secondSpaceName string, firstSpaceContentT
 				printHeaders()
 				printFieldValuesAB("Required", secondField.Required, firstField.Required)
 			}
-			firstFieldValidations := getJsonString(firstField.Validations)
-			secondFieldValidations := getJsonString(secondField.Validations)
+			firstFieldValidations := getJSONString(firstField.Validations)
+			secondFieldValidations := getJSONString(secondField.Validations)
 			if firstFieldValidations != secondFieldValidations {
 				printHeaders()
 				printFieldValuesAB("Validations", firstFieldValidations, secondFieldValidations)
 			}
-			firstFieldItems := getJsonString(firstField.Items)
-			secondFieldItems := getJsonString(secondField.Items)
+			firstFieldItems := getJSONString(firstField.Items)
+			secondFieldItems := getJSONString(secondField.Items)
 			if firstFieldItems != secondFieldItems {
 				printHeaders()
 				printFieldValuesAB("Items", firstFieldItems, secondFieldItems)
@@ -190,7 +187,7 @@ func diffContentTypes(firstSpaceName, secondSpaceName string, firstSpaceContentT
 	}
 }
 
-func getJsonString(value any) (stringValue string) {
+func getJSONString(value any) (stringValue string) {
 	byt, _ := json.Marshal(value)
 	stringValue = string(byt)
 	return
@@ -240,9 +237,9 @@ func sliceElementsCompare[A any](firstSlice, secondSlice []A, getID func(element
 	return firstObjectMap, secondObjectMap, firstOnly, secondOnly, common, sortedIDs
 }
 
-func printContentTypeHeader(contentTypeHeader, contentTypeID string, contentTypeHeaderAlreadyPrinted bool) bool {
+func printContentTypeHeader(contentTypeID string, contentTypeHeaderAlreadyPrinted bool) bool {
 	if !contentTypeHeaderAlreadyPrinted {
-		fmt.Printf(contentTypeHeader, contentTypeID, strings.Repeat("-", 80-len(contentTypeID)))
+		fmt.Printf("Content Type: '%s' %s\n", contentTypeID, strings.Repeat("-", 80-len(contentTypeID)))
 	}
 	return true
 }

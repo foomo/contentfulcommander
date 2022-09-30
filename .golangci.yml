@@ -1,0 +1,80 @@
+run:
+  timeout: 5m
+  tests: false
+
+linters-settings:
+  golint:
+    min-confidence: 0
+  goimports:
+    local-prefixes: github.com/foomo/contentfulcommander
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+    disabled-tags:
+      - performance
+      - experimental
+      - opinionated
+  lll:
+    line-length: 150
+
+linters:
+  disable-all: true
+  enable:
+    - bodyclose
+    - dogsled
+    - dupl
+    - exhaustive
+    - exportloopref
+    - goconst
+    - gofmt
+    - gofumpt
+    - goimports
+    - revive
+    - goprintffuncname
+    - govet
+    - ineffassign
+    - misspell
+    - nakedret
+    - noctx
+    - nolintlint
+    - prealloc
+    - rowserrcheck
+    - sqlclosecheck
+    - staticcheck
+    - stylecheck
+    - typecheck
+    - unconvert
+    - unparam
+    - unused
+    - whitespace
+    - errcheck
+    - gocritic
+    - gosimple
+
+    - gocyclo
+    - gosec
+    - lll
+    - exportloopref
+
+    # unused
+    # - godot
+    # - gocognit
+    # - nlreturn
+    # - gochecknoglobals
+    # - gochecknoinits
+    # - depguard
+    # - goheader
+    # - gomodguard
+
+    # don't enable:
+    # - asciicheck
+    # - funlen
+    # - godox
+    # - goerr113
+    # - gomnd
+    # - interfacer
+    # - maligned
+    # - nestif
+    # - testpackage
+    # - wsl

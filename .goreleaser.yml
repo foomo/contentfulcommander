@@ -1,0 +1,35 @@
+# .goreleaser.yml
+# Build customization
+builds:
+  - binary: contentfulcommander
+    main: ./main.go
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.VERSION={{.Version}}
+    goos:
+      - windows
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+# .goreleaser.yml
+archives:
+  - format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+
+brews:
+  # Reporitory to push the tap to.
+  - tap:
+      owner: foomo
+      name: homebrew
+    caveats: "contentfulcommander help"
+    homepage: "https://github.com/foomo/contentfulcommander"
+    description: "A toolbox of non-trivial Contentful interactions"

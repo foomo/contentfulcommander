@@ -2,12 +2,13 @@ package chid
 
 import (
 	"encoding/json"
-	"github.com/foomo/contentfulcommander/model"
 	"log"
 
 	"github.com/foomo/contentful"
+
 	"github.com/foomo/contentfulcommander/cmd/common"
 	"github.com/foomo/contentfulcommander/contentfulclient"
+	"github.com/foomo/contentfulcommander/model"
 )
 
 func Run(cma *contentful.Contentful, params []string) error {

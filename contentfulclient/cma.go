@@ -38,7 +38,6 @@ func GetSpaceAndEnvironment(param string) (spaceID string, environment string) {
 	splits := strings.Split(param, "/")
 	if len(splits) > 1 {
 		return splits[0], splits[1]
-	} else {
-		return splits[0], "master"
 	}
+	return splits[0], "master"
 }
