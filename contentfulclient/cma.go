@@ -2,10 +2,11 @@ package contentfulclient
 
 import (
 	"encoding/json"
-	"github.com/foomo/contentful"
-	"io/ioutil"
+	"os"
 	"os/user"
 	"strings"
+
+	"github.com/foomo/contentful"
 )
 
 type contentfulRc struct {
@@ -17,7 +18,7 @@ func GetCmaKeyFromRcFile() string {
 	if errGetUser != nil {
 		return ""
 	}
-	contentfulRcBytes, errReadFile := ioutil.ReadFile(currentUser.HomeDir + "/.contentfulrc.json")
+	contentfulRcBytes, errReadFile := os.ReadFile(currentUser.HomeDir + "/.contentfulrc.json")
 	if errReadFile != nil {
 		return ""
 	}
@@ -35,7 +36,7 @@ func GetCMA(cmaKey string) *contentful.Contentful {
 
 func GetSpaceAndEnvironment(param string) (spaceID string, environment string) {
 	splits := strings.Split(param, "/")
-	if len(splits) >= 1 {
+	if len(splits) > 1 {
 		return splits[0], splits[1]
 	} else {
 		return splits[0], "master"

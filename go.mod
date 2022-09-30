@@ -1,6 +1,6 @@
 module github.com/foomo/contentfulcommander
 
-go 1.17
+go 1.19
 
 require (
 	github.com/foomo/contentful v0.4.4

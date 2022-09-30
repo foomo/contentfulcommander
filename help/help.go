@@ -31,10 +31,18 @@ chid - Changes the Sys.ID of an entry
 	switch args[0] {
 	case "chid":
 		fmt.Println(`
-usage: contentfulcommander chid oldid newid
+usage: contentfulcommander space chid oldid newid
 
 Makes a copy of the entry with ID equal to 'newid'. Restores all references and preserves the publishing status.
-The 'oldid' version of the entry is archived unless 'deleteold' is passed.
+The 'oldid' version of the entry is archived unless 'deleteold' is passed. 
+The 'space' parameter is specified in the form spaceid[/environment].
+`)
+	case "modeldiff":
+		fmt.Println(`
+usage: contentfulcommander modeldiff firstspace secondspace
+
+Compares the content model of two spaces and shows the differences. The 'firstspace' and 'secondspace' 
+parameters are specified in the form spaceid[/environment]. 
 `)
 	}
 }

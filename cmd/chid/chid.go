@@ -2,6 +2,7 @@ package chid
 
 import (
 	"encoding/json"
+	"github.com/foomo/contentfulcommander/model"
 	"log"
 
 	"github.com/foomo/contentful"
@@ -50,14 +51,14 @@ func Run(cma *contentful.Contentful, params []string) error {
 				return err
 			}
 			// Try single reference
-			singleRefLocalized := map[string]common.ReferenceSys{}
+			singleRefLocalized := map[string]model.ReferenceSys{}
 			err = json.Unmarshal(bytes, &singleRefLocalized)
 			if err == nil {
 				for locale, referenceSys := range singleRefLocalized {
 					if referenceSys.Sys.ID == oldID {
 						log.Printf("Found a reference in entry %s and field %s", parent.Sys.ID, fieldName)
-						newReferenceSys := common.ReferenceSys{
-							Sys: common.ReferenceSysAttributes{
+						newReferenceSys := model.ReferenceSys{
+							Sys: model.ReferenceSysAttributes{
 								ID:       newID,
 								Type:     "Link",
 								LinkType: "Entry",
@@ -70,16 +71,16 @@ func Run(cma *contentful.Contentful, params []string) error {
 				}
 			}
 			// Try multiple references
-			multiRefLocalized := map[string][]common.ReferenceSys{}
+			multiRefLocalized := map[string][]model.ReferenceSys{}
 			err = json.Unmarshal(bytes, &multiRefLocalized)
 			if err == nil {
 				for locale, referenceSysSlice := range multiRefLocalized {
-					var newReferenceSysMap []common.ReferenceSys
+					var newReferenceSysMap []model.ReferenceSys
 					for _, referenceSys := range referenceSysSlice {
 						if referenceSys.Sys.ID == oldID {
 							log.Printf("Found a reference in entry %s and field %s", parent.Sys.ID, fieldName)
-							newReferenceSys := common.ReferenceSys{
-								Sys: common.ReferenceSysAttributes{
+							newReferenceSys := model.ReferenceSys{
+								Sys: model.ReferenceSysAttributes{
 									ID:       newID,
 									Type:     "Link",
 									LinkType: "Entry",
@@ -113,7 +114,7 @@ func Run(cma *contentful.Contentful, params []string) error {
 	if err != nil {
 		log.Fatalf("Error getting old entry for unpublishing: %v", err)
 	}
-	err = cma.Entries.Unpublish(spaceID,oldEntry)
+	err = cma.Entries.Unpublish(spaceID, oldEntry)
 	if err != nil {
 		log.Fatalf("Error unpublishing old entry: %v", err)
 	}
@@ -121,7 +122,7 @@ func Run(cma *contentful.Contentful, params []string) error {
 	if err != nil {
 		log.Fatalf("Error getting old entry for archiving: %v", err)
 	}
-	err = cma.Entries.Archive(spaceID,oldEntry)
+	err = cma.Entries.Archive(spaceID, oldEntry)
 	if err != nil {
 		log.Fatalf("Error archiving old entry: %v", err)
 	}

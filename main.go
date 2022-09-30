@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"flag"
+	"github.com/foomo/contentfulcommander/cmd/modeldiff"
 	"log"
 	"os"
 
@@ -10,7 +12,7 @@ import (
 	"github.com/foomo/contentfulcommander/help"
 )
 
-var VERSION = "v0.0.1"
+var VERSION = "v0.1.0"
 
 func main() {
 	cmaKey := contentfulclient.GetCmaKeyFromRcFile()
@@ -54,8 +56,12 @@ func runCommand(cmaKey, command string, params []string) error {
 		case "chid":
 			ensureExtraParams(command, params, 3)
 			return chid.Run(client, params)
+		case "modeldiff":
+			ensureExtraParams(command, params, 2)
+			return modeldiff.Run(client, params)
+		default:
+			return errors.New("command not found")
 		}
-		os.Exit(0)
 	}
 	return nil
 }
