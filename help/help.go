@@ -23,8 +23,9 @@ usage: contentfulcommander command [params]
 
 Supported values for 'command' are:
 
-help [command] - Displays this help screen or the 'command' specific one
-chid - Changes the Sys.ID of an entry
+help [command] - Display this help screen or the 'command' specific one
+chid - Change the Sys.ID of an entry
+modeldiff - Compare two content models across spaces and environments
 `)
 		os.Exit(0)
 	}

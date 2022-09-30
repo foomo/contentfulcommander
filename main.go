@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"github.com/foomo/contentfulcommander/cmd/modeldiff"
 	"log"
 	"os"
@@ -48,7 +49,7 @@ func runCommand(cmaKey, command string, params []string) error {
 		help.GetHelp(params)
 		os.Exit(0)
 	case "version":
-		log.Println(VERSION)
+		fmt.Println(VERSION)
 		os.Exit(0)
 	default:
 		client := contentfulclient.GetCMA(cmaKey)
