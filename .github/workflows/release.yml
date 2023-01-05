@@ -1,30 +1,32 @@
-name: goreleaser
+name: Releases
 
 on:
   push:
     tags:
       - v*.*.*
+  workflow_dispatch:
 
 jobs:
-  goreleaser:
+  release:
     runs-on: ubuntu-latest
     env:
       GOFLAGS: -mod=readonly
       GOPROXY: https://proxy.golang.org
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Set up Go
-        uses: actions/setup-go@v3
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v3
         with:
           go-version-file: go.mod
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v3
+      - id: app_token
+        uses: tibdex/github-app-token@v1
         with:
-          distribution: goreleaser
+          app_id: ${{ secrets.TOKEN_APP_ID }}
+          private_key: ${{ secrets.TOKEN_APP_PRIVATE_KEY }}
+          installation_id: ${{ secrets.TOKEN_APP_INSTALLATION_ID }}
+      - uses: goreleaser/goreleaser-action@v3
+        with:
           version: latest
+          distribution: goreleaser
           args: release --rm-dist
         env:
-          GITHUB_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app_token.outputs.token }}
