@@ -29,7 +29,7 @@ brews:
   # Reporitory to push the tap to.
   - tap:
       owner: foomo
-      name: homebrew-foomo
+      name: homebrew-tap
     caveats: "contentfulcommander help"
     homepage: "https://github.com/foomo/contentfulcommander"
     description: "A toolbox of non-trivial Contentful interactions"
