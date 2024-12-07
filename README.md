@@ -1,8 +1,18 @@
+[![Build Status](https://github.com/foomo/contentfulcommander/actions/workflows/pr.yml/badge.svg?branch=main&event=push)](https://github.com/foomo/contentfulcommander/actions/workflows/pr.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/foomo/contentfulcommander)](https://goreportcard.com/report/github.com/foomo/contentfulcommander)
+[![Coverage Status](https://coveralls.io/repos/github/foomo/contentfulcommander/badge.svg?branch=main&)](https://coveralls.io/github/foomo/contentfulcommander?branch=main)
+[![GoDoc](https://godoc.org/github.com/foomo/contentfulcommander?status.svg)](https://godoc.org/github.com/foomo/contentfulcommander)
+
+<p align="center">
+  <img alt="sesamy" src=".github/assets/contentfulcommander.png"/>
+</p>
+
+
 # contentfulcommander
 _A toolbox of non-trivial Contentful interactions_
 
 Contentful Commander is a golang command line utility that simplifies development
-and maintenance of Contentful spaces. 
+and maintenance of Contentful spaces.
 
 ## Installation
 
@@ -38,8 +48,17 @@ and to get help for each specific command run
 $ contentfulcommander help <command>
 ```
 Currently supported commands are:
-- __chid__ - _Change the Sys.ID of an entry_. This creates a copy of the existing entry, 
+- __chid__ - _Change the Sys.ID of an entry_. This creates a copy of the existing entry,
 respecting the publishing status. The old entry is archived
-- __modeldiff__ - _Compare two content models across spaces and environments_. 
+- __modeldiff__ - _Compare two content models across spaces and environments_.
 
+## How to Contribute
+
+Make a pull request...
+
+## License
+
+Distributed under MIT License, please see license file within the code for more details.
+
+_Made with ♥ [foomo](https://www.foomo.org) by [bestbytes](https://www.bestbytes.com)_
 
