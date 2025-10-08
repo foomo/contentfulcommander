@@ -33,27 +33,27 @@ package main
 import (
     "log"
     
-    "github.com/bestbytes/globus/cmd/migrations/migrationlib"
+    "github.com/foomo/contentfulcommander/commanderclient"
 )
 
 func main() {
     // Load config from environment variables
-    config := migrationlib.LoadConfigFromEnv()
+    config := commanderclient.LoadConfigFromEnv()
     
     // Initialize ready-to-use client with logger and loaded space model
-    client, logger, err := migrationlib.Init(config)
+    client, logger, err := commanderclient.Init(config)
     if err != nil {
         log.Fatal(err)
     }
     
     // Filter entities
     entries := client.FilterEntities(
-        migrationlib.FilterByContentType("product"),
-        migrationlib.FilterPublished(),
+        commanderclient.FilterByContentType("product"),
+        commanderclient.FilterPublished(),
     )
     
     // Process entities
-    entries.ForEach(func(entity migrationlib.Entity) {
+    entries.ForEach(func(entity commanderclient.Entity) {
         logger.Info("Processing %s", entity.GetID())
     })
 }
@@ -128,8 +128,8 @@ The `MigrationClient` provides the main interface for working with Contentful sp
 
 ```go
 // Initialize ready-to-use client
-config := migrationlib.LoadConfigFromEnv()
-client, logger, err := migrationlib.Init(config)
+config := commanderclient.LoadConfigFromEnv()
+client, logger, err := commanderclient.Init(config)
 if err != nil {
     log.Fatal(err)
 }
@@ -142,9 +142,9 @@ specificEntries := client.GetEntitiesByContentType("product")
 
 // Filter entities
 filtered := client.FilterEntities(
-    migrationlib.FilterByContentType("product", "category"),
-    migrationlib.FilterPublished(),
-    migrationlib.FilterByUpdatedAfter(time.Now().AddDate(0, -1, 0)),
+    commanderclient.FilterByContentType("product", "category"),
+    commanderclient.FilterPublished(),
+    commanderclient.FilterByUpdatedAfter(time.Now().AddDate(0, -1, 0)),
 )
 ```
 
@@ -162,7 +162,7 @@ entity, exists := collection.GetByID("entity-id")
 
 // Chaining operations
 result := collection.
-    Filter(migrationlib.FilterPublished()).
+    Filter(commanderclient.FilterPublished()).
     Limit(100).
     Skip(50)
 
@@ -203,39 +203,39 @@ The library provides multiple ways to access field values, each optimized for di
 
 ```go
 // Get raw field value
-value := entity.GetFieldValue("title", migrationlib.Locale("en"))
+value := entity.GetFieldValue("title", commanderclient.Locale("en"))
 
 // Get field value with fallback to default locale
-value := entity.GetFieldValueWithFallback("title", migrationlib.Locale("fr"), defaultLocale)
+value := entity.GetFieldValueWithFallback("title", commanderclient.Locale("fr"), defaultLocale)
 ```
 
 ### Type-Safe Field Access
 
 ```go
 // Get field as specific types (returns zero value if not found or wrong type)
-title := entity.GetFieldValueAsString("title", migrationlib.Locale("en"))
-price := entity.GetFieldValueAsFloat64("price", migrationlib.Locale("en"))
-isActive := entity.GetFieldValueAsBool("isActive", migrationlib.Locale("en"))
+title := entity.GetFieldValueAsString("title", commanderclient.Locale("en"))
+price := entity.GetFieldValueAsFloat64("price", commanderclient.Locale("en"))
+isActive := entity.GetFieldValueAsBool("isActive", commanderclient.Locale("en"))
 ```
 
 ### Reference Handling
 
 ```go
 // Get reference as contentful.Entry
-reference := entity.GetFieldValueAsReference("category", migrationlib.Locale("en"))
+reference := entity.GetFieldValueAsReference("category", commanderclient.Locale("en"))
 
 // Get actual referenced entity (resolves the reference)
-if categoryEntity, found := entity.GetFieldValueAsReferencedEntity("category", migrationlib.Locale("en")); found {
-    categoryTitle := categoryEntity.GetFieldValueAsString("title", migrationlib.Locale("en"))
+if categoryEntity, found := entity.GetFieldValueAsReferencedEntity("category", commanderclient.Locale("en")); found {
+    categoryTitle := categoryEntity.GetFieldValueAsString("title", commanderclient.Locale("en"))
 }
 
 // Get multiple references as slice
-references := entity.GetFieldValueAsReferences("tags", migrationlib.Locale("en"))
+references := entity.GetFieldValueAsReferences("tags", commanderclient.Locale("en"))
 
 // Get multiple referenced entities as collection (broken references automatically skipped)
-tagEntities := entity.GetFieldValueAsReferencedEntities("tags", migrationlib.Locale("en"))
-tagEntities.ForEach(func(tagEntity migrationlib.Entity) {
-    fmt.Printf("Tag: %s\n", tagEntity.GetFieldValueAsString("name", migrationlib.Locale("en")))
+tagEntities := entity.GetFieldValueAsReferencedEntities("tags", commanderclient.Locale("en"))
+tagEntities.ForEach(func(tagEntity commanderclient.Entity) {
+    fmt.Printf("Tag: %s\n", tagEntity.GetFieldValueAsString("name", commanderclient.Locale("en")))
 })
 ```
 
@@ -249,7 +249,7 @@ type Query struct {
 }
 
 var myQuery Query
-if err := categoryEntity.GetFieldValueInto("catalogueQuery", migrationlib.Locale("en"), &myQuery); err != nil {
+if err := categoryEntity.GetFieldValueInto("catalogueQuery", commanderclient.Locale("en"), &myQuery); err != nil {
     log.Printf("Error: %v", err)
 }
 ```
@@ -258,13 +258,13 @@ if err := categoryEntity.GetFieldValueInto("catalogueQuery", migrationlib.Locale
 
 ```go
 // Get title (uses content type display field for entries, asset title for assets)
-title := entity.GetTitle(migrationlib.Locale("en"))
+title := entity.GetTitle(commanderclient.Locale("en"))
 
 // Get description (assets only, returns empty string for entries)
-description := entity.GetDescription(migrationlib.Locale("en"))
+description := entity.GetDescription(commanderclient.Locale("en"))
 
 // Get file information (assets only, returns nil for entries)
-file := entity.GetFile(migrationlib.Locale("en"))
+file := entity.GetFile(commanderclient.Locale("en"))
 if file != nil {
     fmt.Printf("File: %s (%s)\n", file.Name, file.ContentType)
     fmt.Printf("URL: %s\n", file.URL)
@@ -282,13 +282,13 @@ defaultLocale := client.GetDefaultLocale()
 
 // Access field values for specific locales
 entity := entries[0]
-value := entity.GetFieldValue("title", migrationlib.Locale("en"))
+value := entity.GetFieldValue("title", commanderclient.Locale("en"))
 
 // Access field values with fallback to default locale
-value := entity.GetFieldValueWithFallback("title", migrationlib.Locale("fr"), defaultLocale)
+value := entity.GetFieldValueWithFallback("title", commanderclient.Locale("fr"), defaultLocale)
 
 // Set field values for specific locales
-entity.SetFieldValue("title", migrationlib.Locale("de"), "Deutscher Titel")
+entity.SetFieldValue("title", commanderclient.Locale("de"), "Deutscher Titel")
 
 // Get all fields (always locale maps)
 fields := entity.GetFields()
@@ -299,19 +299,19 @@ fields := entity.GetFields()
 ```go
 // Filter by field value for a specific locale
 englishEntries := client.FilterEntities(
-    migrationlib.FilterByFieldValueWithLocale("title", migrationlib.Locale("en"), "Welcome"),
+    commanderclient.FilterByFieldValueWithLocale("title", commanderclient.Locale("en"), "Welcome"),
 )
 
 // Filter by field value with fallback to default locale
 entriesWithWelcome := client.FilterEntities(
-    migrationlib.FilterByFieldValueWithFallback("title", migrationlib.Locale("fr"), defaultLocale, "Welcome"),
+    commanderclient.FilterByFieldValueWithFallback("title", commanderclient.Locale("fr"), defaultLocale, "Welcome"),
 )
 
 // Filter by locale availability
 multiLocaleEntries := client.FilterEntities(
-    migrationlib.FilterByLocaleAvailability([]migrationlib.Locale{
-        migrationlib.Locale("en"),
-        migrationlib.Locale("de"),
+    commanderclient.FilterByLocaleAvailability([]commanderclient.Locale{
+        commanderclient.Locale("en"),
+        commanderclient.Locale("de"),
     }),
 )
 ```
@@ -320,11 +320,11 @@ multiLocaleEntries := client.FilterEntities(
 
 ```go
 // Extract field values for a specific locale
-collection := migrationlib.NewEntityCollection(entries)
-englishTitles := collection.ExtractFieldValues("title", migrationlib.Locale("en"))
+collection := commanderclient.NewEntityCollection(entries)
+englishTitles := collection.ExtractFieldValues("title", commanderclient.Locale("en"))
 
 // Extract field values with fallback to default locale
-frenchTitles := collection.ExtractFieldValuesWithFallback("title", migrationlib.Locale("fr"), defaultLocale)
+frenchTitles := collection.ExtractFieldValuesWithFallback("title", commanderclient.Locale("fr"), defaultLocale)
 
 // Create field updates for multiple locales
 fields := map[string]any{
@@ -342,13 +342,13 @@ operations := collection.ToUpdateOperations(fields)
 
 ```go
 // Configure migration to target specific locales
-options := migrationlib.DefaultMigrationOptions()
-options.TargetLocales = []migrationlib.Locale{
-    migrationlib.Locale("en"),
-    migrationlib.Locale("de"),
+options := commanderclient.DefaultMigrationOptions()
+options.TargetLocales = []commanderclient.Locale{
+    commanderclient.Locale("en"),
+    commanderclient.Locale("de"),
 }
 
-executor := migrationlib.NewMigrationExecutor(client, options)
+executor := commanderclient.NewMigrationExecutor(client, options)
 ```
 
 ### Asset-Specific Usage
@@ -360,16 +360,16 @@ Assets have a fixed structure with only title, description, and file fields. The
 assets := client.GetAssets()
 
 // Access asset-specific fields
-assets.ForEach(func(asset migrationlib.Entity) {
+assets.ForEach(func(asset commanderclient.Entity) {
     // Get asset title for different locales
-    titleEN := asset.GetTitle(migrationlib.Locale("en"))
-    titleDE := asset.GetTitle(migrationlib.Locale("de"))
+    titleEN := asset.GetTitle(commanderclient.Locale("en"))
+    titleDE := asset.GetTitle(commanderclient.Locale("de"))
     
     // Get asset description
-    description := asset.GetDescription(migrationlib.Locale("en"))
+    description := asset.GetDescription(commanderclient.Locale("en"))
     
     // Get file information
-    file := asset.GetFile(migrationlib.Locale("en"))
+    file := asset.GetFile(commanderclient.Locale("en"))
     if file != nil {
         fmt.Printf("Asset: %s\n", titleEN)
         fmt.Printf("File: %s (%s)\n", file.Name, file.ContentType)
@@ -381,8 +381,8 @@ assets.ForEach(func(asset migrationlib.Entity) {
 })
 
 // Generic field methods return safe defaults for assets
-value := asset.GetFieldValue("title", migrationlib.Locale("en")) // Returns nil
-title := asset.GetFieldValueAsString("title", migrationlib.Locale("en")) // Returns ""
+value := asset.GetFieldValue("title", commanderclient.Locale("en")) // Returns nil
+title := asset.GetFieldValueAsString("title", commanderclient.Locale("en")) // Returns ""
 ```
 
 ## Migration Operations
@@ -417,10 +417,10 @@ const (
 Execute batch operations with comprehensive error handling:
 
 ```go
-operations := []migrationlib.MigrationOperation{
+operations := []commanderclient.MigrationOperation{
     {
         EntityID:  "entity-id",
-        Operation: migrationlib.OperationUpdate,
+        Operation: commanderclient.OperationUpdate,
         Entity:    entity,
         NewFields: map[string]any{
             "newField": "newValue",
@@ -428,10 +428,10 @@ operations := []migrationlib.MigrationOperation{
     },
 }
 
-options := migrationlib.DefaultMigrationOptions()
+options := commanderclient.DefaultMigrationOptions()
 options.DryRun = true
 
-executor := migrationlib.NewMigrationExecutor(client, options)
+executor := commanderclient.NewMigrationExecutor(client, options)
 results := executor.ExecuteBatch(ctx, operations)
 
 // Check results
@@ -443,9 +443,9 @@ errorCount := executor.GetErrorCount()
 
 ```go
 // Update operation (most common)
-updateOp := &migrationlib.MigrationOperation{
+updateOp := &commanderclient.MigrationOperation{
     EntityID:  "product-123",
-    Operation: migrationlib.OperationUpdate,
+    Operation: commanderclient.OperationUpdate,
     Entity:    productEntity,
     NewFields: map[string]any{
         "title": map[string]any{
@@ -456,23 +456,23 @@ updateOp := &migrationlib.MigrationOperation{
 }
 
 // Publish operation
-publishOp := &migrationlib.MigrationOperation{
+publishOp := &commanderclient.MigrationOperation{
     EntityID:  "product-123",
-    Operation: migrationlib.OperationPublish,
+    Operation: commanderclient.OperationPublish,
     Entity:    productEntity,
 }
 
 // Delete operation
-deleteOp := &migrationlib.MigrationOperation{
+deleteOp := &commanderclient.MigrationOperation{
     EntityID:  "old-product-456",
-    Operation: migrationlib.OperationDelete,
+    Operation: commanderclient.OperationDelete,
     Entity:    oldProductEntity,
 }
 
 // Using collection methods to create operations
 products := client.FilterEntities(
-    migrationlib.FilterByContentType("product"),
-    migrationlib.FilterDrafts(),
+    commanderclient.FilterByContentType("product"),
+    commanderclient.FilterDrafts(),
 )
 
 // Create update operations for all draft products
@@ -487,8 +487,8 @@ publishOps := products.ToPublishOperations()
 
 // Create delete operations for old products
 oldProducts := client.FilterEntities(
-    migrationlib.FilterByContentType("product"),
-    migrationlib.FilterByUpdatedBefore(time.Now().AddDate(-2, 0, 0)),
+    commanderclient.FilterByContentType("product"),
+    commanderclient.FilterByUpdatedBefore(time.Now().AddDate(-2, 0, 0)),
 )
 deleteOps := oldProducts.ToDeleteOperations()
 ```
@@ -499,24 +499,24 @@ The library provides many built-in filters:
 
 ```go
 // Content type filters
-migrationlib.FilterByContentType("product", "category")
-migrationlib.FilterByType("Entry")  // or "Asset"
+commanderclient.FilterByContentType("product", "category")
+commanderclient.FilterByType("Entry")  // or "Asset"
 
 // Publication status
-migrationlib.FilterPublished()
-migrationlib.FilterDrafts()
+commanderclient.FilterPublished()
+commanderclient.FilterDrafts()
 
 // Timestamp filters
-migrationlib.FilterByCreatedAfter(time)
-migrationlib.FilterByUpdatedAfter(time)
+commanderclient.FilterByCreatedAfter(time)
+commanderclient.FilterByUpdatedAfter(time)
 
 // Field filters
-migrationlib.FilterByFieldValue("status", "active")
-migrationlib.FilterByFieldExists("description")
-migrationlib.FilterByFieldContains("title", "important")
+commanderclient.FilterByFieldValue("status", "active")
+commanderclient.FilterByFieldExists("description")
+commanderclient.FilterByFieldContains("title", "important")
 
 // ID patterns
-migrationlib.FilterByIDPattern("prod-")
+commanderclient.FilterByIDPattern("prod-")
 ```
 
 ## Configuration
@@ -525,10 +525,10 @@ Load configuration from environment variables and initialize a ready-to-use clie
 
 ```go
 // From environment variables
-config := migrationlib.LoadConfigFromEnv()
+config := commanderclient.LoadConfigFromEnv()
 
 // Or create custom config
-config := &migrationlib.Config{
+config := &commanderclient.Config{
     CMAToken:    "your-cma-key",
     SpaceID:     "your-space-id",
     Environment: "master",
@@ -537,7 +537,7 @@ config := &migrationlib.Config{
 }
 
 // Initialize ready-to-use client with logger and loaded space model
-client, logger, err := migrationlib.Init(config)
+client, logger, err := commanderclient.Init(config)
 if err != nil {
     log.Fatal(err)
 }
@@ -571,13 +571,13 @@ package main
 import (
     "log"
     
-    "github.com/bestbytes/globus/cmd/migrations/migrationlib"
+    "github.com/foomo/contentfulcommander"
 )
 
 func main() {
     // Load config and initialize ready-to-use client
-    config := migrationlib.LoadConfigFromEnv()
-    client, logger, err := migrationlib.Init(config)
+    config := commanderclient.LoadConfigFromEnv()
+    client, logger, err := commanderclient.Init(config)
     if err != nil {
         log.Fatal(err)
     }
@@ -589,26 +589,26 @@ func main() {
     
     // Filter entities
     products := client.FilterEntities(
-        migrationlib.FilterByContentType("product"),
-        migrationlib.FilterPublished(),
+        commanderclient.FilterByContentType("product"),
+        commanderclient.FilterPublished(),
     )
     
     // Process entries with type-safe field access
-    products.ForEach(func(entity migrationlib.Entity) {
-        title := entity.GetFieldValueAsString("title", migrationlib.Locale("en"))
-        price := entity.GetFieldValueAsFloat64("price", migrationlib.Locale("en"))
+    products.ForEach(func(entity commanderclient.Entity) {
+        title := entity.GetFieldValueAsString("title", commanderclient.Locale("en"))
+        price := entity.GetFieldValueAsFloat64("price", commanderclient.Locale("en"))
         
         // Handle references
-        if categoryEntity, found := entity.GetFieldValueAsReferencedEntity("category", migrationlib.Locale("en")); found {
-            categoryName := categoryEntity.GetFieldValueAsString("name", migrationlib.Locale("en"))
+        if categoryEntity, found := entity.GetFieldValueAsReferencedEntity("category", commanderclient.Locale("en")); found {
+            categoryName := categoryEntity.GetFieldValueAsString("name", commanderclient.Locale("en"))
             logger.Info("Product: %s (Category: %s, Price: %.2f)", title, categoryName, price)
         }
     })
     
     // Process assets
-    assets.ForEach(func(asset migrationlib.Entity) {
-        title := asset.GetTitle(migrationlib.Locale("en"))
-        file := asset.GetFile(migrationlib.Locale("en"))
+    assets.ForEach(func(asset commanderclient.Entity) {
+        title := asset.GetTitle(commanderclient.Locale("en"))
+        file := asset.GetFile(commanderclient.Locale("en"))
         if file != nil {
             logger.Info("Asset: %s (%s)", title, file.Name)
         }
