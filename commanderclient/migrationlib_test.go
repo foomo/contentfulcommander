@@ -217,7 +217,7 @@ func TestEntityCollection(t *testing.T) {
 	}
 
 	// Test migration operations
-	updateOps := collection.ToUpdateOperations(map[string]any{"test": "value"})
+	updateOps := collection.ToUpdateOperations()
 	if len(updateOps) != 3 {
 		t.Errorf("Expected 3 update operations, got %d", len(updateOps))
 	}

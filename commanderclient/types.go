@@ -1,6 +1,7 @@
 package commanderclient
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/foomo/contentful"
@@ -111,9 +112,6 @@ type Entity interface {
 	// GetSys returns the system metadata
 	GetSys() *contentful.Sys
 
-	// GetNewFields returns a copy of the fields map for safe modification
-	GetNewFields() map[string]any
-
 	// IsEntry returns true if this entity is an Entry
 	IsEntry() bool
 
@@ -162,18 +160,20 @@ type MigrationStats struct {
 	Errors           int
 	StartTime        time.Time
 	EndTime          time.Time
+	Duration         time.Duration
+}
+
+// Printf returns a formatted string with migration statistics
+func (ms *MigrationStats) Printf() string {
+	ms.EndTime = time.Now()
+	ms.Duration = ms.EndTime.Sub(ms.StartTime)
+	return fmt.Sprintf("Completed: 📄 %d/%d entities processed (%d entries, %d assets) 🚨 %d errors ⏱️ duration: %v",
+		ms.ProcessedEntries+ms.ProcessedAssets, ms.TotalEntities, ms.ProcessedEntries, ms.ProcessedAssets, ms.Errors, ms.Duration)
 }
 
 // MigrationOptions configures migration behavior
 type MigrationOptions struct {
-	DryRun            bool
-	BatchSize         int
-	Concurrency       int
-	SkipPublished     bool
-	SkipDrafts        bool
-	ContentTypeFilter []string
-	AssetFilter       []string
-	TargetLocales     []Locale // Locales to process during migration
+	DryRun bool
 }
 
 // CollectionStats provides statistics about a collection
@@ -191,12 +191,7 @@ type CollectionStats struct {
 // DefaultMigrationOptions returns sensible defaults
 func DefaultMigrationOptions() *MigrationOptions {
 	return &MigrationOptions{
-		DryRun:        false,
-		BatchSize:     100,
-		Concurrency:   5,
-		SkipPublished: false,
-		SkipDrafts:    false,
-		TargetLocales: []Locale{}, // Empty means all locales
+		DryRun: true,
 	}
 }
 

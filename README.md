@@ -104,7 +104,6 @@ type Entity interface {
     // Utility methods
     SetFieldValue(fieldName string, locale Locale, value any)
     GetSys() *contentful.Sys
-    GetNewFields() map[string]any
     IsEntry() bool
     IsAsset() bool
 }
@@ -326,16 +325,14 @@ englishTitles := collection.ExtractFieldValues("title", commanderclient.Locale("
 // Extract field values with fallback to default locale
 frenchTitles := collection.ExtractFieldValuesWithFallback("title", commanderclient.Locale("fr"), defaultLocale)
 
-// Create field updates for multiple locales
-fields := map[string]any{
-    "description": map[string]any{
-        "en": "Updated description in English",
-        "de": "Aktualisierte Beschreibung auf Deutsch",
-    },
-}
+// Modify entities directly, then create operations
+collection.ForEach(func(entity commanderclient.Entity) {
+    entity.SetFieldValue("description", commanderclient.Locale("en"), "Updated description in English")
+    entity.SetFieldValue("description", commanderclient.Locale("de"), "Aktualisierte Beschreibung auf Deutsch")
+})
 
 // Create migration operations
-operations := collection.ToUpdateOperations(fields)
+operations := collection.ToUpdateOperations()
 ```
 
 ### Migration with Locale Targeting
@@ -422,14 +419,11 @@ operations := []commanderclient.MigrationOperation{
         EntityID:  "entity-id",
         Operation: commanderclient.OperationUpdate,
         Entity:    entity,
-        NewFields: map[string]any{
-            "newField": "newValue",
-        },
     },
 }
 
 options := commanderclient.DefaultMigrationOptions()
-options.DryRun = true
+options.DryRun = false
 
 executor := commanderclient.NewMigrationExecutor(client, options)
 results := executor.ExecuteBatch(ctx, operations)
@@ -447,12 +441,6 @@ updateOp := &commanderclient.MigrationOperation{
     EntityID:  "product-123",
     Operation: commanderclient.OperationUpdate,
     Entity:    productEntity,
-    NewFields: map[string]any{
-        "title": map[string]any{
-            "en": "Updated Product Title",
-            "de": "Aktualisierter Produkttitel",
-        },
-    },
 }
 
 // Publish operation
@@ -476,11 +464,7 @@ products := client.FilterEntities(
 )
 
 // Create update operations for all draft products
-updateOps := products.ToUpdateOperations(map[string]any{
-    "status": map[string]any{
-        "en": "active",
-    },
-})
+updateOps := products.ToUpdateOperations()
 
 // Create publish operations for all products
 publishOps := products.ToPublishOperations()
@@ -532,7 +516,6 @@ config := &commanderclient.Config{
     CMAToken:    "your-cma-key",
     SpaceID:     "your-space-id",
     Environment: "master",
-    DryRun:      true,
     Verbose:     true,
 }
 
@@ -547,7 +530,6 @@ Environment variables:
 - `CONTENTFUL_CMAKEY`: CMA API key (mandatory)
 - `CONTENTFUL_SPACE_ID`: Space ID (mandatory)
 - `CONTENTFUL_ENVIRONMENT`: Environment (default: "dev")
-- `CONTENTFUL_DRY_RUN`: Enable dry run mode
 - `CONTENTFUL_VERBOSE`: Enable verbose logging
 
 ## Example Usage

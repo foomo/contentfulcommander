@@ -12,8 +12,6 @@ type MigrationOperation struct {
 	EntityID  string
 	Operation string // Use Operation* constants from types.go
 	Entity    Entity
-	NewFields map[string]any // Fields with locale maps
-	DryRun    bool
 }
 
 // MigrationResult represents the result of a migration operation
@@ -22,7 +20,6 @@ type MigrationResult struct {
 	Operation   string
 	Success     bool
 	Error       error
-	NewVersion  int
 	ProcessedAt time.Time
 }
 
@@ -125,9 +122,10 @@ func (me *MigrationExecutor) upsertEntity(ctx context.Context, op *MigrationOper
 		entryEntity := op.Entity.(*EntryEntity)
 		entry := entryEntity.Entry
 
-		// Update fields
-		if op.NewFields != nil {
-			entry.Fields = op.NewFields
+		// Update fields from entity
+		fields := op.Entity.GetFields()
+		if fields != nil {
+			entry.Fields = fields
 		}
 
 		// Update the entry
@@ -144,15 +142,16 @@ func (me *MigrationExecutor) upsertEntity(ctx context.Context, op *MigrationOper
 		assetEntity := op.Entity.(*AssetEntity)
 		asset := assetEntity.Asset
 
-		// Update fields
-		if op.NewFields != nil {
+		// Update fields from entity
+		fields := op.Entity.GetFields()
+		if fields != nil {
 			// Handle asset field updates
-			if titleField, exists := op.NewFields["title"]; exists {
+			if titleField, exists := fields["title"]; exists {
 				if titleMap, ok := titleField.(map[string]string); ok {
 					asset.Fields.Title = titleMap
 				}
 			}
-			if descField, exists := op.NewFields["description"]; exists {
+			if descField, exists := fields["description"]; exists {
 				if descMap, ok := descField.(map[string]string); ok {
 					asset.Fields.Description = descMap
 				}
@@ -281,14 +280,12 @@ func (me *MigrationExecutor) deleteEntity(ctx context.Context, op *MigrationOper
 	return false, fmt.Errorf("unsupported entity type: %s", op.Entity.GetType())
 }
 
-// CreateUpdateOperation creates a migration operation with fields
-func CreateUpdateOperation(entityID string, entity Entity, newFields map[string]any) *MigrationOperation {
+// CreateUpdateOperation creates a migration operation
+func CreateUpdateOperation(entityID string, entity Entity) *MigrationOperation {
 	return &MigrationOperation{
 		EntityID:  entityID,
 		Operation: OperationUpdate,
 		Entity:    entity,
-		NewFields: newFields,
-		DryRun:    false,
 	}
 }
 

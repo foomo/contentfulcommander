@@ -12,7 +12,6 @@ type Config struct {
 	CMAToken    string
 	SpaceID     string
 	Environment string
-	DryRun      bool
 	Verbose     bool
 }
 
@@ -21,9 +20,8 @@ func LoadConfigFromEnv() *Config {
 	return &Config{
 		CMAToken:    os.Getenv("CONTENTFUL_CMAKEY"),
 		SpaceID:     os.Getenv("CONTENTFUL_SPACE_ID"),
-		Environment: getEnvOrDefault("CONTENTFUL_ENVIRONMENT", "master"),
-		DryRun:      getEnvOrDefault("CONTENTFUL_DRY_RUN", "false") == "true",
-		Verbose:     getEnvOrDefault("CONTENTFUL_VERBOSE", "false") == "true",
+		Environment: getEnvOrDefault("CONTENTFUL_ENVIRONMENT", "dev"),
+		Verbose:     getEnvOrDefault("CONTENTFUL_VERBOSE", "true") == "true",
 	}
 }
 
@@ -61,7 +59,8 @@ func Init(config *Config) (*MigrationClient, *Logger, error) {
 	}
 
 	if config.Verbose {
-		logger.Info("Successfully loaded space model")
+		logger.Info("Successfully loaded space")
+		logger.Info(client.GetStats().Printf())
 	}
 
 	return client, logger, nil
@@ -130,7 +129,7 @@ func PrintResults(results []MigrationResult) {
 	for _, result := range results {
 		if result.Success {
 			successCount++
-			fmt.Printf("✓ %s %s (v%d)\n", result.Operation, result.EntityID, result.NewVersion)
+			fmt.Printf("✓ %s %s\n", result.Operation, result.EntityID)
 		} else {
 			errorCount++
 			fmt.Printf("✗ %s %s: %v\n", result.Operation, result.EntityID, result.Error)

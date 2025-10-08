@@ -294,37 +294,36 @@ func (ec *EntityCollection) GetStats() *CollectionStats {
 }
 
 // ToMigrationOperations converts entities to migration operations
-func (ec *EntityCollection) ToMigrationOperations(operation string, newFields map[string]any) []MigrationOperation {
+func (ec *EntityCollection) ToMigrationOperations(operation string) []MigrationOperation {
 	operations := make([]MigrationOperation, len(ec.entities))
 	for i, entity := range ec.entities {
 		operations[i] = MigrationOperation{
 			EntityID:  entity.GetID(),
 			Operation: operation,
 			Entity:    entity,
-			NewFields: newFields,
 		}
 	}
 	return operations
 }
 
 // ToUpdateOperations creates update operations for all entities
-func (ec *EntityCollection) ToUpdateOperations(newFields map[string]any) []MigrationOperation {
-	return ec.ToMigrationOperations(OperationUpdate, newFields)
+func (ec *EntityCollection) ToUpdateOperations() []MigrationOperation {
+	return ec.ToMigrationOperations(OperationUpdate)
 }
 
 // ToPublishOperations creates publish operations for all entities
 func (ec *EntityCollection) ToPublishOperations() []MigrationOperation {
-	return ec.ToMigrationOperations(OperationPublish, nil)
+	return ec.ToMigrationOperations(OperationPublish)
 }
 
 // ToUnpublishOperations creates unpublish operations for all entities
 func (ec *EntityCollection) ToUnpublishOperations() []MigrationOperation {
-	return ec.ToMigrationOperations(OperationUnpublish, nil)
+	return ec.ToMigrationOperations(OperationUnpublish)
 }
 
 // ToDeleteOperations creates delete operations for all entities
 func (ec *EntityCollection) ToDeleteOperations() []MigrationOperation {
-	return ec.ToMigrationOperations(OperationDelete, nil)
+	return ec.ToMigrationOperations(OperationDelete)
 }
 
 // Common filter functions

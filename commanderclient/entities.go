@@ -3,7 +3,6 @@ package commanderclient
 import (
 	"encoding/json"
 	"fmt"
-	"maps"
 	"time"
 
 	"github.com/foomo/contentful"
@@ -259,12 +258,6 @@ func (ee *EntryEntity) GetSys() *contentful.Sys {
 	return ee.Entry.Sys
 }
 
-func (ee *EntryEntity) GetNewFields() map[string]any {
-	newFields := make(map[string]any)
-	maps.Copy(newFields, ee.Entry.Fields)
-	return newFields
-}
-
 func (ee *EntryEntity) IsEntry() bool {
 	return true
 }
@@ -430,13 +423,6 @@ func (ae *AssetEntity) SetFieldValue(fieldName string, locale Locale, value any)
 
 func (ae *AssetEntity) GetSys() *contentful.Sys {
 	return ae.Asset.Sys
-}
-
-func (ae *AssetEntity) GetNewFields() map[string]any {
-	newFields := make(map[string]any)
-	fields := ae.GetFields()
-	maps.Copy(newFields, fields)
-	return newFields
 }
 
 func (ae *AssetEntity) IsEntry() bool {
