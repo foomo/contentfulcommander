@@ -1,6 +1,15 @@
+[![Build Status](https://github.com/foomo/contentfulcommander/actions/workflows/pr.yml/badge.svg?branch=main&event=push)](https://github.com/foomo/contentfulcommander/actions/workflows/pr.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/foomo/contentfulcommander)](https://goreportcard.com/report/github.com/foomo/contentfulcommander)
+[![Coverage Status](https://coveralls.io/repos/github/foomo/contentfulcommander/badge.svg?branch=main&)](https://coveralls.io/github/foomo/contentfulcommander?branch=main)
+[![GoDoc](https://godoc.org/github.com/foomo/contentfulcommander?status.svg)](https://godoc.org/github.com/foomo/contentfulcommander)
+
+<p align="center">
+  <img alt="sesamy" src=".github/assets/contentfulcommander.png"/>
+</p>
+
 # Contentful Commander
 
-A portable Go library for Contentful migrations that provides a high-level interface for working with Contentful spaces, entities, and performing bulk operations.
+A Go library for Contentful migrations that provides a high-level interface for working with Contentful spaces, entities, and performing bulk operations.
 
 ## Features
 
@@ -641,4 +650,7 @@ log.Printf("Processed %d entities with %d errors",
 
 ## License
 
-See the [LICENSE] file
+Distributed under MIT License, please see license file within the code for more details.
+
+_Made with ♥ [foomo](https://www.foomo.org) by [bestbytes](https://www.bestbytes.com)_
+
