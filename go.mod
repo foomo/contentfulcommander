@@ -1,15 +1,7 @@
 module github.com/foomo/contentfulcommander
 
-go 1.19
+go 1.25
 
-require (
-	github.com/foomo/contentful v0.4.4
-	github.com/stretchr/testify v1.7.1
-)
+require github.com/foomo/contentful v0.5.5
 
-require (
-	github.com/davecgh/go-spew v1.1.0 // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
-	gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c // indirect
-	moul.io/http2curl v1.0.0 // indirect
-)
+require github.com/aoliveti/curling v1.1.0 // indirect
