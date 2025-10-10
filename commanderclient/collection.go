@@ -380,10 +380,10 @@ func FilterByUpdatedAfter(t time.Time) EntityFilter {
 	}
 }
 
-// FilterByIDPattern returns a filter for entities matching an ID pattern
-func FilterByIDPattern(pattern string) EntityFilter {
+// FilterByID returns a filter for entities matching an ID pattern
+func FilterByID(entityID string) EntityFilter {
 	return func(entity Entity) bool {
-		return strings.Contains(entity.GetID(), pattern)
+		return entity.GetID() == entityID
 	}
 }
 

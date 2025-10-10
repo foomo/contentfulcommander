@@ -84,6 +84,7 @@ func (me *MigrationExecutor) ExecuteBatch(ctx context.Context, operations []Migr
 
 	for i, op := range operations {
 		results[i] = *me.ExecuteOperation(ctx, &op)
+		log.Printf("Operation %d: %s %s %t %v", i, results[i].Operation, results[i].EntityID, results[i].Success, results[i].Error)
 	}
 
 	return results
@@ -174,12 +175,13 @@ func (me *MigrationExecutor) upsertEntity(ctx context.Context, op *MigrationOper
 
 // updateEntity upserts an entity with new fields and then publishes it only if it's already in published status
 func (me *MigrationExecutor) updateEntity(ctx context.Context, op *MigrationOperation) (bool, error) {
+	wasPublished := op.Entity.IsPublished()
 	success, err := me.upsertEntity(ctx, op)
 	if err != nil {
 		return false, err
 	}
 	if success {
-		if op.Entity.GetPublishingStatus() == StatusPublished {
+		if wasPublished {
 			return me.publishEntity(ctx, op)
 		}
 		return true, nil
