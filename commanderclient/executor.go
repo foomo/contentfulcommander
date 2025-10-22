@@ -1,9 +1,13 @@
 package commanderclient
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -51,6 +55,21 @@ func (me *MigrationExecutor) ExecuteOperation(ctx context.Context, op *Migration
 		ProcessedAt: time.Now(),
 	}
 
+	if me.options.Confirm {
+		confirmed, err := me.confirmOperation(op)
+		if err != nil {
+			result.Error = err
+			me.results = append(me.results, *result)
+			return result
+		}
+		if !confirmed {
+			result.Error = fmt.Errorf("operation cancelled by user")
+			log.Printf("Skipping %s on entity %s: user cancelled", op.Operation, op.EntityID)
+			me.results = append(me.results, *result)
+			return result
+		}
+	}
+
 	if me.options.DryRun {
 		log.Printf("[DRY RUN] Would execute %s on entity %s", op.Operation, op.EntityID)
 		result.Success = true
@@ -88,6 +107,79 @@ func (me *MigrationExecutor) ExecuteBatch(ctx context.Context, operations []Migr
 	}
 
 	return results
+}
+
+func (me *MigrationExecutor) confirmOperation(op *MigrationOperation) (bool, error) {
+	fmt.Println("\n=== Operation Confirmation ===")
+	fmt.Printf("Space: %s\n", me.client.GetSpaceID())
+	fmt.Printf("Environment: %s\n", me.client.GetEnvironment())
+	fmt.Printf("Entity ID: %s\n", op.EntityID)
+
+	entityType := "unknown"
+	contentType := ""
+	name := "<unknown>"
+
+	if op.Entity != nil {
+		entityType = op.Entity.GetType()
+		if ct := op.Entity.GetContentType(); ct != "" {
+			contentType = ct
+		} else if op.Entity.IsAsset() {
+			contentType = "Asset"
+		}
+
+		locale := Locale("en")
+		if me.client != nil && me.client.spaceModel != nil && me.client.spaceModel.DefaultLocale != "" {
+			locale = me.client.spaceModel.DefaultLocale
+		}
+
+		if title := op.Entity.GetTitle(locale); title != "" {
+			name = title
+		} else {
+			for _, fallback := range []Locale{Locale("en-US"), Locale("en")} {
+				if fallback == locale {
+					continue
+				}
+				if title := op.Entity.GetTitle(fallback); title != "" {
+					name = title
+					break
+				}
+			}
+			if name == "<unknown>" && op.Entity.IsAsset() {
+				if desc := op.Entity.GetDescription(locale); desc != "" {
+					name = desc
+				}
+			}
+		}
+
+		if name == "<unknown>" {
+			name = op.Entity.GetID()
+		}
+	}
+
+	if contentType == "" {
+		contentType = entityType
+	}
+
+	fmt.Printf("Entity Type: %s\n", entityType)
+	fmt.Printf("Content Type: %s\n", contentType)
+	fmt.Printf("Name: %s\n", name)
+	fmt.Printf("Operation: %s\n", op.Operation)
+	fmt.Printf("Dry Run: %t\n", me.options.DryRun)
+	fmt.Print("Proceed? [Y/n]: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return false, fmt.Errorf("failed to read confirmation input: %w", err)
+	}
+
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return true, nil
+	}
+
+	input = strings.ToLower(input)
+	return input == "y" || input == "yes", nil
 }
 
 // GetResults returns all migration results

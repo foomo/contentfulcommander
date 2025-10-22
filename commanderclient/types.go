@@ -173,7 +173,8 @@ func (ms *MigrationStats) Printf() string {
 
 // MigrationOptions configures migration behavior
 type MigrationOptions struct {
-	DryRun bool
+	DryRun  bool
+	Confirm bool
 }
 
 // CollectionStats provides statistics about a collection
@@ -191,7 +192,8 @@ type CollectionStats struct {
 // DefaultMigrationOptions returns sensible defaults
 func DefaultMigrationOptions() *MigrationOptions {
 	return &MigrationOptions{
-		DryRun: true,
+		DryRun:  true,
+		Confirm: false,
 	}
 }
 

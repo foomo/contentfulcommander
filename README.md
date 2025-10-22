@@ -424,6 +424,7 @@ operations := []commanderclient.MigrationOperation{
 
 options := commanderclient.DefaultMigrationOptions()
 options.DryRun = false
+options.Confirm = true // Prompt before executing each operation
 
 executor := commanderclient.NewMigrationExecutor(client, options)
 results := executor.ExecuteBatch(ctx, operations)
@@ -432,6 +433,8 @@ results := executor.ExecuteBatch(ctx, operations)
 successCount := executor.GetSuccessCount()
 errorCount := executor.GetErrorCount()
 ```
+
+With confirmations enabled, each operation's details (space, environment, entity metadata, and action) are printed before execution, and pressing Enter accepts the default `Y`.
 
 ### Creating Different Types of Operations
 
@@ -635,4 +638,3 @@ log.Printf("Processed %d entities with %d errors",
 Distributed under MIT License, please see license file within the code for more details.
 
 _Made with ♥ [foomo](https://www.foomo.org) by [bestbytes](https://www.bestbytes.com)_
-
