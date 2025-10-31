@@ -57,3 +57,5 @@ help:
 			} \
 		}' \
 		$(MAKEFILE_LIST)
+test:
+	go test ./...
