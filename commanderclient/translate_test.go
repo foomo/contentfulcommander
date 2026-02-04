@@ -559,7 +559,11 @@ func TestDeepLTranslator(t *testing.T) {
 
 	// Create client with mock server URL
 	client := NewDeepLClient("test-key", WithDeepLBaseURL(server.URL))
-	translator := NewDeepLTranslator(client, DeepLSourceDE, DeepLTargetENGB)
+	translator := NewDeepLTranslator(
+		client,
+		SourceLocale{Locale: "de", DeepLLang: DeepLSourceDE},
+		TargetLocale{Locale: "en", DeepLLang: DeepLTargetENGB},
+	)
 
 	// Test single translation
 	result, billed, err := translator.Translate("Test")

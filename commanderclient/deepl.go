@@ -240,37 +240,49 @@ func (c *DeepLClient) TranslateText(text string, targetLang DeepLTargetLang, sou
 	return resp.Translations[0].Text, resp.Translations[0].BilledCharacters, nil
 }
 
-// DeepLTranslator wraps a DeepLClient for use with TranslateField and TranslateFieldBatch.
-// It provides convenience methods that implement TranslateFunc and TranslateBatchFunc.
-type DeepLTranslator struct {
-	Client     *DeepLClient
-	SourceLang DeepLSourceLang
-	TargetLang DeepLTargetLang
+// SourceLocale pairs a Contentful locale with its corresponding DeepL source language.
+type SourceLocale struct {
+	Locale    Locale          // Contentful locale, e.g., "en-US"
+	DeepLLang DeepLSourceLang // DeepL source language code, e.g., "EN"
 }
 
-// NewDeepLTranslator creates a new DeepLTranslator with the given client and language settings.
-func NewDeepLTranslator(client *DeepLClient, sourceLang DeepLSourceLang, targetLang DeepLTargetLang) *DeepLTranslator {
+// TargetLocale pairs a Contentful locale with its corresponding DeepL target language.
+type TargetLocale struct {
+	Locale    Locale          // Contentful locale, e.g., "de-DE"
+	DeepLLang DeepLTargetLang // DeepL target language code, e.g., "DE"
+}
+
+// DeepLTranslator provides field translation using the DeepL API.
+// It combines Contentful locale mapping with DeepL language settings.
+type DeepLTranslator struct {
+	Client *DeepLClient
+	Source SourceLocale
+	Target TargetLocale
+}
+
+// NewDeepLTranslator creates a new DeepLTranslator with the given client and locale settings.
+func NewDeepLTranslator(client *DeepLClient, source SourceLocale, target TargetLocale) *DeepLTranslator {
 	return &DeepLTranslator{
-		Client:     client,
-		SourceLang: sourceLang,
-		TargetLang: targetLang,
+		Client: client,
+		Source: source,
+		Target: target,
 	}
 }
 
-// Translate implements TranslateFunc for single text translation.
+// translateText translates a single text string using the configured languages.
 // Returns the translated text and the number of billed characters.
-func (d *DeepLTranslator) Translate(text string) (string, int, error) {
-	return d.Client.TranslateText(text, d.TargetLang, d.SourceLang)
+func (d *DeepLTranslator) translateText(text string) (string, int, error) {
+	return d.Client.TranslateText(text, d.Target.DeepLLang, d.Source.DeepLLang)
 }
 
-// TranslateBatch implements TranslateBatchFunc for batch translation.
+// translateBatch translates multiple texts using the configured languages.
 // Returns the translated texts and the total number of billed characters.
-func (d *DeepLTranslator) TranslateBatch(texts []string) ([]string, int, error) {
+func (d *DeepLTranslator) translateBatch(texts []string) ([]string, int, error) {
 	showBilled := true
 	resp, err := d.Client.Translate(DeepLTranslateRequest{
 		Text:            texts,
-		SourceLang:      d.SourceLang,
-		TargetLang:      d.TargetLang,
+		SourceLang:      d.Source.DeepLLang,
+		TargetLang:      d.Target.DeepLLang,
 		ShowBilledChars: &showBilled,
 	})
 	if err != nil {
@@ -286,14 +298,45 @@ func (d *DeepLTranslator) TranslateBatch(texts []string) ([]string, int, error) 
 	return results, totalBilled, nil
 }
 
-// AsTranslateFunc returns the Translate method as a TranslateFunc.
-// Use this when calling TranslateField.
-func (d *DeepLTranslator) AsTranslateFunc() TranslateFunc {
-	return d.Translate
+// Translate translates a single text string using the configured languages.
+// Returns the translated text and the number of billed characters.
+func (d *DeepLTranslator) Translate(text string) (string, int, error) {
+	return d.translateText(text)
 }
 
-// AsTranslateBatchFunc returns the TranslateBatch method as a TranslateBatchFunc.
-// Use this when calling TranslateFieldBatch.
-func (d *DeepLTranslator) AsTranslateBatchFunc() TranslateBatchFunc {
-	return d.TranslateBatch
+// TranslateBatch translates multiple texts using the configured languages.
+// Returns the translated texts and the total number of billed characters.
+func (d *DeepLTranslator) TranslateBatch(texts []string) ([]string, int, error) {
+	return d.translateBatch(texts)
+}
+
+// TranslateField translates a field value from source to target locale.
+// It automatically handles different field types:
+//   - String fields (Symbol, Text): translated directly
+//   - RichText fields: all text nodes are extracted, translated individually, and reassembled
+//
+// Returns the total number of billed characters for the translation.
+func (d *DeepLTranslator) TranslateField(entity Entity, fieldName string) (int, error) {
+	return TranslateField(entity, fieldName, d.Source.Locale, d.Target.Locale, d.translateText)
+}
+
+// TranslateFieldBatch translates a field value using batch translation.
+// This is more efficient for RichText fields as all text nodes are translated in a single API call.
+// Returns the total number of billed characters for the translation.
+func (d *DeepLTranslator) TranslateFieldBatch(entity Entity, fieldName string) (int, error) {
+	return TranslateFieldBatch(entity, fieldName, d.Source.Locale, d.Target.Locale, d.translateBatch)
+}
+
+// TranslateFieldIfEmpty translates only if the target locale field is empty or nil.
+// This is useful for incremental translation where you don't want to re-translate
+// already translated content.
+// Returns the total number of billed characters for the translation (0 if skipped).
+func (d *DeepLTranslator) TranslateFieldIfEmpty(entity Entity, fieldName string) (int, error) {
+	return TranslateFieldIfEmpty(entity, fieldName, d.Source.Locale, d.Target.Locale, d.translateText)
+}
+
+// TranslateFieldBatchIfEmpty is like TranslateFieldIfEmpty but uses batch translation.
+// Returns the total number of billed characters for the translation (0 if skipped).
+func (d *DeepLTranslator) TranslateFieldBatchIfEmpty(entity Entity, fieldName string) (int, error) {
+	return TranslateFieldBatchIfEmpty(entity, fieldName, d.Source.Locale, d.Target.Locale, d.translateBatch)
 }
