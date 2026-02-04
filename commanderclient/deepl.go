@@ -214,11 +214,14 @@ func (c *DeepLClient) Translate(req DeepLTranslateRequest) (*DeepLTranslateRespo
 	return &result, nil
 }
 
-// TranslateText is a convenience function for translating a single text string
-func (c *DeepLClient) TranslateText(text string, targetLang DeepLTargetLang, sourceLang DeepLSourceLang) (string, error) {
+// TranslateText is a convenience function for translating a single text string.
+// Returns the translated text and the number of billed characters.
+func (c *DeepLClient) TranslateText(text string, targetLang DeepLTargetLang, sourceLang DeepLSourceLang) (string, int, error) {
+	showBilled := true
 	req := DeepLTranslateRequest{
-		Text:       []string{text},
-		TargetLang: targetLang,
+		Text:            []string{text},
+		TargetLang:      targetLang,
+		ShowBilledChars: &showBilled,
 	}
 
 	if sourceLang != "" {
@@ -227,14 +230,14 @@ func (c *DeepLClient) TranslateText(text string, targetLang DeepLTargetLang, sou
 
 	resp, err := c.Translate(req)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 
 	if len(resp.Translations) == 0 {
-		return "", errors.New("no translation returned")
+		return "", 0, errors.New("no translation returned")
 	}
 
-	return resp.Translations[0].Text, nil
+	return resp.Translations[0].Text, resp.Translations[0].BilledCharacters, nil
 }
 
 // DeepLTranslator wraps a DeepLClient for use with TranslateField and TranslateFieldBatch.
@@ -255,26 +258,32 @@ func NewDeepLTranslator(client *DeepLClient, sourceLang DeepLSourceLang, targetL
 }
 
 // Translate implements TranslateFunc for single text translation.
-func (d *DeepLTranslator) Translate(text string) (string, error) {
+// Returns the translated text and the number of billed characters.
+func (d *DeepLTranslator) Translate(text string) (string, int, error) {
 	return d.Client.TranslateText(text, d.TargetLang, d.SourceLang)
 }
 
 // TranslateBatch implements TranslateBatchFunc for batch translation.
-func (d *DeepLTranslator) TranslateBatch(texts []string) ([]string, error) {
+// Returns the translated texts and the total number of billed characters.
+func (d *DeepLTranslator) TranslateBatch(texts []string) ([]string, int, error) {
+	showBilled := true
 	resp, err := d.Client.Translate(DeepLTranslateRequest{
-		Text:       texts,
-		SourceLang: d.SourceLang,
-		TargetLang: d.TargetLang,
+		Text:            texts,
+		SourceLang:      d.SourceLang,
+		TargetLang:      d.TargetLang,
+		ShowBilledChars: &showBilled,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	results := make([]string, len(resp.Translations))
+	totalBilled := 0
 	for i, t := range resp.Translations {
 		results[i] = t.Text
+		totalBilled += t.BilledCharacters
 	}
-	return results, nil
+	return results, totalBilled, nil
 }
 
 // AsTranslateFunc returns the Translate method as a TranslateFunc.

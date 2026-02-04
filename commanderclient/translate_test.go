@@ -27,17 +27,19 @@ func createTestEntry(id string, fields map[string]any) *EntryEntity {
 }
 
 // Mock translation function that uppercases text
-func mockTranslate(text string) (string, error) {
-	return strings.ToUpper(text), nil
+func mockTranslate(text string) (string, int, error) {
+	return strings.ToUpper(text), len(text), nil
 }
 
 // Mock batch translation function
-func mockBatchTranslate(texts []string) ([]string, error) {
+func mockBatchTranslate(texts []string) ([]string, int, error) {
 	results := make([]string, len(texts))
+	totalBilled := 0
 	for i, text := range texts {
 		results[i] = strings.ToUpper(text)
+		totalBilled += len(text)
 	}
-	return results, nil
+	return results, totalBilled, nil
 }
 
 func TestTranslateField_SimpleString(t *testing.T) {
@@ -47,9 +49,12 @@ func TestTranslateField_SimpleString(t *testing.T) {
 		},
 	})
 
-	err := TranslateField(entry, "title", Locale("de"), Locale("en"), mockTranslate)
+	billed, err := TranslateField(entry, "title", Locale("de"), Locale("en"), mockTranslate)
 	if err != nil {
 		t.Fatalf("TranslateField failed: %v", err)
+	}
+	if billed != 10 {
+		t.Errorf("Expected 10 billed characters, got %d", billed)
 	}
 
 	result := entry.GetFieldValueAsString("title", Locale("en"))
@@ -65,9 +70,12 @@ func TestTranslateField_EmptyString(t *testing.T) {
 		},
 	})
 
-	err := TranslateField(entry, "title", Locale("de"), Locale("en"), mockTranslate)
+	billed, err := TranslateField(entry, "title", Locale("de"), Locale("en"), mockTranslate)
 	if err != nil {
 		t.Fatalf("TranslateField failed: %v", err)
+	}
+	if billed != 0 {
+		t.Errorf("Expected 0 billed characters for empty string, got %d", billed)
 	}
 
 	result := entry.GetFieldValueAsString("title", Locale("en"))
@@ -79,9 +87,12 @@ func TestTranslateField_EmptyString(t *testing.T) {
 func TestTranslateField_NilField(t *testing.T) {
 	entry := createTestEntry("test-3", map[string]any{})
 
-	err := TranslateField(entry, "title", Locale("de"), Locale("en"), mockTranslate)
+	billed, err := TranslateField(entry, "title", Locale("de"), Locale("en"), mockTranslate)
 	if err != nil {
 		t.Fatalf("TranslateField should not fail for nil field: %v", err)
+	}
+	if billed != 0 {
+		t.Errorf("Expected 0 billed characters for nil field, got %d", billed)
 	}
 
 	result := entry.GetFieldValue("title", Locale("en"))
@@ -126,9 +137,13 @@ func TestTranslateField_RichText(t *testing.T) {
 		},
 	})
 
-	err := TranslateField(entry, "description", Locale("de"), Locale("en"), mockTranslate)
+	billed, err := TranslateField(entry, "description", Locale("de"), Locale("en"), mockTranslate)
 	if err != nil {
 		t.Fatalf("TranslateField failed: %v", err)
+	}
+	// "Hello" (5) + " World" (6) + "Goodbye" (7) = 18
+	if billed != 18 {
+		t.Errorf("Expected 18 billed characters, got %d", billed)
 	}
 
 	// Verify the translated content
@@ -170,9 +185,12 @@ func TestTranslateField_RichTextEmpty(t *testing.T) {
 		},
 	})
 
-	err := TranslateField(entry, "description", Locale("de"), Locale("en"), mockTranslate)
+	billed, err := TranslateField(entry, "description", Locale("de"), Locale("en"), mockTranslate)
 	if err != nil {
 		t.Fatalf("TranslateField failed: %v", err)
+	}
+	if billed != 0 {
+		t.Errorf("Expected 0 billed characters for empty RichText, got %d", billed)
 	}
 
 	// Verify the structure was copied
@@ -189,11 +207,11 @@ func TestTranslateField_TranslationError(t *testing.T) {
 		},
 	})
 
-	errorTranslate := func(text string) (string, error) {
-		return "", errors.New("translation failed")
+	errorTranslate := func(text string) (string, int, error) {
+		return "", 0, errors.New("translation failed")
 	}
 
-	err := TranslateField(entry, "title", Locale("de"), Locale("en"), errorTranslate)
+	_, err := TranslateField(entry, "title", Locale("de"), Locale("en"), errorTranslate)
 	if err == nil {
 		t.Fatal("Expected error, got nil")
 	}
@@ -209,9 +227,12 @@ func TestTranslateFieldBatch_SimpleString(t *testing.T) {
 		},
 	})
 
-	err := TranslateFieldBatch(entry, "title", Locale("de"), Locale("en"), mockBatchTranslate)
+	billed, err := TranslateFieldBatch(entry, "title", Locale("de"), Locale("en"), mockBatchTranslate)
 	if err != nil {
 		t.Fatalf("TranslateFieldBatch failed: %v", err)
+	}
+	if billed != 10 {
+		t.Errorf("Expected 10 billed characters, got %d", billed)
 	}
 
 	result := entry.GetFieldValueAsString("title", Locale("en"))
@@ -223,7 +244,7 @@ func TestTranslateFieldBatch_SimpleString(t *testing.T) {
 func TestTranslateFieldBatch_RichText(t *testing.T) {
 	// Track the order of texts received
 	var receivedTexts []string
-	trackingTranslate := func(texts []string) ([]string, error) {
+	trackingTranslate := func(texts []string) ([]string, int, error) {
 		receivedTexts = texts
 		return mockBatchTranslate(texts)
 	}
@@ -253,7 +274,7 @@ func TestTranslateFieldBatch_RichText(t *testing.T) {
 		},
 	})
 
-	err := TranslateFieldBatch(entry, "description", Locale("de"), Locale("en"), trackingTranslate)
+	_, err := TranslateFieldBatch(entry, "description", Locale("de"), Locale("en"), trackingTranslate)
 	if err != nil {
 		t.Fatalf("TranslateFieldBatch failed: %v", err)
 	}
@@ -273,14 +294,17 @@ func TestTranslateFieldIfEmpty_SkipsExisting(t *testing.T) {
 	})
 
 	translateCalled := false
-	trackingTranslate := func(text string) (string, error) {
+	trackingTranslate := func(text string) (string, int, error) {
 		translateCalled = true
-		return strings.ToUpper(text), nil
+		return strings.ToUpper(text), len(text), nil
 	}
 
-	err := TranslateFieldIfEmpty(entry, "title", Locale("de"), Locale("en"), trackingTranslate)
+	billed, err := TranslateFieldIfEmpty(entry, "title", Locale("de"), Locale("en"), trackingTranslate)
 	if err != nil {
 		t.Fatalf("TranslateFieldIfEmpty failed: %v", err)
+	}
+	if billed != 0 {
+		t.Errorf("Expected 0 billed characters when skipped, got %d", billed)
 	}
 
 	if translateCalled {
@@ -302,9 +326,12 @@ func TestTranslateFieldIfEmpty_TranslatesWhenEmpty(t *testing.T) {
 		},
 	})
 
-	err := TranslateFieldIfEmpty(entry, "title", Locale("de"), Locale("en"), mockTranslate)
+	billed, err := TranslateFieldIfEmpty(entry, "title", Locale("de"), Locale("en"), mockTranslate)
 	if err != nil {
 		t.Fatalf("TranslateFieldIfEmpty failed: %v", err)
+	}
+	if billed != 6 {
+		t.Errorf("Expected 6 billed characters, got %d", billed)
 	}
 
 	result := entry.GetFieldValueAsString("title", Locale("en"))
@@ -509,12 +536,18 @@ func TestDeepLTranslator(t *testing.T) {
 			t.Errorf("Expected target EN-GB, got %s", req.TargetLang)
 		}
 
-		// Build response - prefix each text with [EN]
+		// Verify ShowBilledChars is set
+		if req.ShowBilledChars == nil || !*req.ShowBilledChars {
+			t.Error("Expected ShowBilledChars to be true")
+		}
+
+		// Build response - prefix each text with [EN] and return billed characters
 		translations := make([]DeepLTranslation, len(req.Text))
 		for i, text := range req.Text {
 			translations[i] = DeepLTranslation{
 				Text:                   "[EN] " + text,
 				DetectedSourceLanguage: "DE",
+				BilledCharacters:       len(text),
 			}
 		}
 
@@ -529,21 +562,27 @@ func TestDeepLTranslator(t *testing.T) {
 	translator := NewDeepLTranslator(client, DeepLSourceDE, DeepLTargetENGB)
 
 	// Test single translation
-	result, err := translator.Translate("Test")
+	result, billed, err := translator.Translate("Test")
 	if err != nil {
 		t.Fatalf("Translate failed: %v", err)
 	}
 	if result != "[EN] Test" {
 		t.Errorf("Expected '[EN] Test', got '%s'", result)
 	}
+	if billed != 4 {
+		t.Errorf("Expected 4 billed characters, got %d", billed)
+	}
 
 	// Test batch translation
-	results, err := translator.TranslateBatch([]string{"One", "Two"})
+	results, totalBilled, err := translator.TranslateBatch([]string{"One", "Two"})
 	if err != nil {
 		t.Fatalf("TranslateBatch failed: %v", err)
 	}
 	if len(results) != 2 || results[0] != "[EN] One" || results[1] != "[EN] Two" {
 		t.Errorf("Unexpected batch results: %v", results)
+	}
+	if totalBilled != 6 { // "One" (3) + "Two" (3)
+		t.Errorf("Expected 6 total billed characters, got %d", totalBilled)
 	}
 }
 
