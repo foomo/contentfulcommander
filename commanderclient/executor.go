@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,9 +30,10 @@ type MigrationResult struct {
 
 // MigrationExecutor handles the execution of migration operations
 type MigrationExecutor struct {
-	client  *MigrationClient
-	options *MigrationOptions
-	results []MigrationResult
+	client    *MigrationClient
+	options   *MigrationOptions
+	results   []MigrationResult
+	resultsMu sync.Mutex
 }
 
 // NewMigrationExecutor creates a new migration executor
@@ -59,13 +61,13 @@ func (me *MigrationExecutor) ExecuteOperation(ctx context.Context, op *Migration
 		confirmed, err := me.confirmOperation(op)
 		if err != nil {
 			result.Error = err
-			me.results = append(me.results, *result)
+			me.appendResult(*result)
 			return result
 		}
 		if !confirmed {
 			result.Error = fmt.Errorf("operation cancelled by user")
 			log.Printf("Skipping %s on entity %s: user cancelled", op.Operation, op.EntityID)
-			me.results = append(me.results, *result)
+			me.appendResult(*result)
 			return result
 		}
 	}
@@ -73,7 +75,7 @@ func (me *MigrationExecutor) ExecuteOperation(ctx context.Context, op *Migration
 	if me.options.DryRun {
 		log.Printf("[DRY RUN] Would execute %s on entity %s", op.Operation, op.EntityID)
 		result.Success = true
-		me.results = append(me.results, *result)
+		me.appendResult(*result)
 		return result
 	}
 
@@ -93,19 +95,51 @@ func (me *MigrationExecutor) ExecuteOperation(ctx context.Context, op *Migration
 		result.Success = false
 	}
 
-	me.results = append(me.results, *result)
+	me.appendResult(*result)
 	return result
 }
 
-// ExecuteBatch executes multiple operations in batch
+// appendResult safely appends a result to the results slice
+func (me *MigrationExecutor) appendResult(result MigrationResult) {
+	me.resultsMu.Lock()
+	me.results = append(me.results, result)
+	me.resultsMu.Unlock()
+}
+
+// ExecuteBatch executes multiple operations in batch with concurrency
 func (me *MigrationExecutor) ExecuteBatch(ctx context.Context, operations []MigrationOperation) []MigrationResult {
+	now := time.Now()
 	results := make([]MigrationResult, len(operations))
 
-	for i, op := range operations {
-		results[i] = *me.ExecuteOperation(ctx, &op)
-		log.Printf("Operation %d: %s %s %t %v", i, results[i].Operation, results[i].EntityID, results[i].Success, results[i].Error)
+	// Run sequentially if confirmation is required (stdin interaction)
+	if me.options.Confirm {
+		for i, op := range operations {
+			results[i] = *me.ExecuteOperation(ctx, &op)
+			log.Printf("Operation %d: %s %s %t %v", i, results[i].Operation, results[i].EntityID, results[i].Success, results[i].Error)
+		}
+		return results
 	}
 
+	// Run concurrently with semaphore to limit parallelism
+	concurrency := me.client.GetConcurrency()
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+
+	for i, op := range operations {
+		wg.Add(1)
+		go func(idx int, operation MigrationOperation) {
+			defer wg.Done()
+			sem <- struct{}{}        // acquire semaphore
+			defer func() { <-sem }() // release semaphore
+
+			results[idx] = *me.ExecuteOperation(ctx, &operation)
+			log.Printf("Operation %d: %s %s %t %v", idx, results[idx].Operation, results[idx].EntityID, results[idx].Success, results[idx].Error)
+		}(i, op)
+	}
+
+	wg.Wait()
+	duration := time.Since(now)
+	log.Printf("Executed %d operations in %02dh:%02dm:%02ds minutes with concurrency %d", len(operations), int(duration.Hours()), int(duration.Minutes())%60, int(duration.Seconds())%60, concurrency)
 	return results
 }
 

@@ -2,7 +2,9 @@ package commanderclient
 
 import (
 	"fmt"
+	"log"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -86,9 +88,32 @@ func (ec *EntityCollection) Skip(n int) *EntityCollection {
 
 // ForEach applies a function to each entity in the collection
 func (ec *EntityCollection) ForEach(fn func(Entity)) {
+	start := time.Now()
 	for _, entity := range ec.entities {
 		fn(entity)
 	}
+	duration := time.Since(start)
+	log.Printf("Executed ForEach on %d entities in %02dh:%02dm:%02ds minutes with concurrency %d", len(ec.entities), int(duration.Hours()), int(duration.Minutes())%60, int(duration.Seconds())%60, 1)
+}
+
+// ForEachConcurrent applies a function to each entity concurrently with a specified concurrency level
+func (ec *EntityCollection) ForEachConcurrent(concurrency int, fn func(Entity)) {
+	start := time.Now()
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, concurrency)
+
+	for _, entity := range ec.entities {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(e Entity) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fn(e)
+		}(entity)
+	}
+	wg.Wait()
+	duration := time.Since(start)
+	log.Printf("Executed ForEachConcurrent on %d entities in %02dh:%02dm:%02ds minutes with concurrency %d", len(ec.entities), int(duration.Hours()), int(duration.Minutes())%60, int(duration.Seconds())%60, concurrency)
 }
 
 // Transform applies a transformation function to each entity and returns a new collection

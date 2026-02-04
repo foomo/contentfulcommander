@@ -20,6 +20,7 @@ type MigrationClient struct {
 	spaceModel  *SpaceModel
 	cache       map[string]Entity
 	stats       *MigrationStats
+	concurrency int
 }
 
 // newMigrationClient creates a new migration client
@@ -39,6 +40,7 @@ func newMigrationClient(cmaKey, spaceID, environment string) *MigrationClient {
 		stats: &MigrationStats{
 			StartTime: time.Now(),
 		},
+		concurrency: 3,
 	}
 }
 
@@ -293,4 +295,17 @@ func (mc *MigrationClient) GetLocaleCodes() []Locale {
 		return []Locale{}
 	}
 	return GetLocaleCodes(mc.spaceModel.Locales)
+}
+
+// SetConcurrency sets the concurrency level for batch operations
+func (mc *MigrationClient) SetConcurrency(n int) {
+	if n < 1 {
+		n = 1
+	}
+	mc.concurrency = n
+}
+
+// GetConcurrency returns the concurrency level for batch operations
+func (mc *MigrationClient) GetConcurrency() int {
+	return mc.concurrency
 }
