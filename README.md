@@ -21,7 +21,9 @@ A Go library for Contentful migrations that provides a high-level interface for 
 - **Asset-Specific Methods**: Dedicated methods for asset title, description, and file access
 - **Flexible Filtering**: Filter entities by content type, publication status, timestamps, and custom criteria
 - **Collection Operations**: Chain operations like filtering, mapping, grouping, and reducing
-- **Migration Execution**: Execute batch operations with dry-run support and comprehensive error handling
+- **Migration Execution**: Execute batch operations with dry-run support, concurrent execution, and comprehensive error handling
+- **DeepL Translation**: Built-in DeepL API integration for automated field translation with cost tracking
+- **Concurrent Loading**: Parallel loading of entries and assets for faster space initialization
 - **Configuration Management**: Load configuration from environment variables or `.contentfulrc.json` files
 - **Portable Design**: Only depends on `github.com/foomo/contentful` and standard library
 
@@ -164,6 +166,15 @@ result := collection.
     Filter(commanderclient.FilterPublished()).
     Limit(100).
     Skip(50)
+
+// Iteration
+collection.ForEach(func(entity Entity) {
+    // Process each entity sequentially
+})
+
+collection.ForEachConcurrent(5, func(entity Entity) {
+    // Process each entity concurrently with concurrency level of 5
+})
 
 // Data extraction
 ids := collection.ExtractIDs()
@@ -348,6 +359,133 @@ options.TargetLocales = []commanderclient.Locale{
 executor := commanderclient.NewMigrationExecutor(client, options)
 ```
 
+## DeepL Translation
+
+The library provides built-in DeepL API integration for automated translation of Contentful fields.
+
+### DeepL Client Setup
+
+```go
+// Create a DeepL client
+deeplClient := commanderclient.NewDeepLClient("your-deepl-api-key")
+
+// With custom options
+deeplClient := commanderclient.NewDeepLClient(
+    "your-deepl-api-key",
+    commanderclient.WithDeepLBaseURL("https://api-free.deepl.com/v2"), // For free tier
+    commanderclient.WithDeepLTimeout(30 * time.Second),
+)
+```
+
+### DeepL Translator
+
+The `DeepLTranslator` pairs Contentful locales with DeepL language codes for seamless translation:
+
+```go
+// Define source and target locales
+source := commanderclient.SourceLocale{
+    Locale:    commanderclient.Locale("en-US"),
+    DeepLLang: commanderclient.DeepLSourceEN,
+}
+target := commanderclient.TargetLocale{
+    Locale:    commanderclient.Locale("de-DE"),
+    DeepLLang: commanderclient.DeepLTargetDE,
+}
+
+// Create translator
+translator := commanderclient.NewDeepLTranslator(deeplClient, source, target)
+```
+
+### Translating Fields
+
+```go
+// Translate a single field (works with string and RichText fields)
+billedChars, err := translator.TranslateField(entity, "title")
+if err != nil {
+    log.Printf("Translation failed: %v", err)
+}
+log.Printf("Billed characters: %d", billedChars)
+
+// Batch translation (more efficient for RichText with many text nodes)
+billedChars, err := translator.TranslateFieldBatch(entity, "description")
+
+// Translate only if target locale is empty (incremental translation)
+billedChars, err := translator.TranslateFieldIfEmpty(entity, "title")
+billedChars, err := translator.TranslateFieldBatchIfEmpty(entity, "description")
+```
+
+### Supported Languages
+
+**Source Languages:**
+- `DeepLSourceDE` (German), `DeepLSourceEN` (English), `DeepLSourceFR` (French)
+- `DeepLSourceES` (Spanish), `DeepLSourceIT` (Italian), `DeepLSourceNL` (Dutch)
+- `DeepLSourcePL` (Polish), `DeepLSourcePT` (Portuguese), `DeepLSourceRU` (Russian)
+- `DeepLSourceJA` (Japanese), `DeepLSourceZH` (Chinese)
+
+**Target Languages:**
+- `DeepLTargetDE`, `DeepLTargetENGB`, `DeepLTargetENUS`, `DeepLTargetFR`
+- `DeepLTargetES`, `DeepLTargetIT`, `DeepLTargetNL`, `DeepLTargetPL`
+- `DeepLTargetPTBR`, `DeepLTargetPTPT`, `DeepLTargetRU`, `DeepLTargetJA`, `DeepLTargetZH`
+
+### Translation Cost Tracking
+
+All translation methods return the number of billed characters, allowing you to track API usage:
+
+```go
+totalBilled := 0
+
+entries := client.FilterEntities(commanderclient.FilterByContentType("article"))
+entries.ForEach(func(entity commanderclient.Entity) {
+    billed, err := translator.TranslateFieldBatch(entity, "body")
+    if err != nil {
+        log.Printf("Translation error: %v", err)
+        return
+    }
+    totalBilled += billed
+})
+
+log.Printf("Total billed characters: %d", totalBilled)
+```
+
+### Text Utilities
+
+The library includes text utilities that are automatically applied during translation:
+
+```go
+// Match case style from a reference string
+result := commanderclient.MatchCase("hello world", "ORIGINAL") // Returns "HELLO WORLD"
+result := commanderclient.MatchCase("HELLO WORLD", "original") // Returns "hello world"
+result := commanderclient.MatchCase("hello world", "Original") // Returns "Hello world"
+
+// Fix URLs that might have been capitalized during translation
+result := commanderclient.ToLowerURL("HTTPS://example.com") // Returns "hTTPS://example.com"
+
+// Clean up URIs (lowercase, replace spaces with dashes)
+result := commanderclient.FixURI("  My Page Title  ") // Returns "my-page-title"
+```
+
+### Direct DeepL API Usage
+
+For advanced use cases, you can use the DeepL client directly:
+
+```go
+// Translate a single text
+translated, billedChars, err := deeplClient.TranslateText(
+    "Hello, world!",
+    commanderclient.DeepLTargetDE,
+    commanderclient.DeepLSourceEN,
+)
+
+// Batch translation with full control
+resp, err := deeplClient.Translate(commanderclient.DeepLTranslateRequest{
+    Text:       []string{"Hello", "World"},
+    TargetLang: commanderclient.DeepLTargetDE,
+    SourceLang: commanderclient.DeepLSourceEN,
+    Formality:  commanderclient.DeepLFormalityMore,
+    ShowBilledChars: &showBilled,
+})
+```
+
 ### Asset-Specific Usage
 
 Assets have a fixed structure with only title, description, and file fields. The library provides dedicated methods for these:
@@ -433,6 +571,21 @@ results := executor.ExecuteBatch(ctx, operations)
 successCount := executor.GetSuccessCount()
 errorCount := executor.GetErrorCount()
 ```
+
+### Concurrent Execution
+
+`ExecuteBatch` runs operations concurrently by default with a concurrency level of 3. This means up to 3 API calls to Contentful will be made in parallel. Individual operation failures do not stop the batch - all operations are attempted.
+
+```go
+// Optionally adjust concurrency level (default is 3)
+client.SetConcurrency(5) // Run up to 5 operations in parallel
+
+// Execute batch - runs concurrently
+executor := commanderclient.NewMigrationExecutor(client, options)
+results := executor.ExecuteBatch(ctx, operations)
+```
+
+**Note:** When `options.Confirm = true`, operations run sequentially to allow for stdin interaction.
 
 With confirmations enabled, each operation's details (space, environment, entity metadata, and action) are printed before execution, and pressing Enter accepts the default `Y`.
 
@@ -534,6 +687,7 @@ Environment variables:
 - `CONTENTFUL_SPACE_ID`: Space ID (mandatory)
 - `CONTENTFUL_ENVIRONMENT`: Environment (default: "dev")
 - `CONTENTFUL_VERBOSE`: Enable verbose logging
+- `DEEPL_API_KEY`: DeepL API key (required for translation features)
 
 ## Example Usage
 
@@ -547,6 +701,7 @@ See the `example/` directory for complete examples that demonstrate:
 - Collection operations and chaining
 - Creating and executing migration operations
 - Handling results and statistics
+- DeepL translation with cost tracking
 
 ### Basic Example
 
@@ -623,10 +778,13 @@ log.Printf("Processed %d entities with %d errors",
 ## Performance Considerations
 
 - The library loads entire space models into memory for efficient operations
+- **Concurrent loading**: Entries and assets are loaded in parallel for faster initialization
+- **Concurrent batch execution**: `ExecuteBatch` runs operations concurrently (default: 3 parallel API calls, configurable via `client.SetConcurrency(n)`)
 - Use appropriate batch sizes for large operations
 - Consider using dry-run mode for testing
 - Filter entities early to reduce memory usage
 - Use pagination for very large spaces
+- For translation, use batch methods (`TranslateFieldBatch`) for RichText fields with many text nodes
 
 ## Dependencies
 
