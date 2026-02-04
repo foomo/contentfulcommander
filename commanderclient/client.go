@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/foomo/contentful"
+	"golang.org/x/sync/errgroup"
 )
 
 // MigrationClient provides a high-level interface for Contentful migrations
@@ -83,14 +84,22 @@ func (mc *MigrationClient) LoadSpaceModel(ctx context.Context, logger *Logger) e
 		return fmt.Errorf("failed to load content types: %w", err)
 	}
 
-	// Load entries
-	if err := mc.loadEntries(ctx, spaceModel, 512, logger); err != nil {
-		return fmt.Errorf("failed to load entries: %w", err)
-	}
-
-	// Load assets
-	if err := mc.loadAssets(ctx, spaceModel, logger); err != nil {
-		return fmt.Errorf("failed to load assets: %w", err)
+	// Load entries and assets concurrently
+	g, gCtx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		if err := mc.loadEntries(gCtx, spaceModel, 512, logger); err != nil {
+			return fmt.Errorf("failed to load entries: %w", err)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		if err := mc.loadAssets(gCtx, spaceModel, logger); err != nil {
+			return fmt.Errorf("failed to load assets: %w", err)
+		}
+		return nil
+	})
+	if err := g.Wait(); err != nil {
+		return err
 	}
 
 	mc.spaceModel = spaceModel
