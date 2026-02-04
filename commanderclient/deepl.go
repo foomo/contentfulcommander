@@ -125,10 +125,10 @@ func NewDeepLClient(authKey string, options ...DeepLClientOption) *DeepLClient {
 
 // DeepLTranslateRequest represents a translation request
 type DeepLTranslateRequest struct {
-	Text               []string            `json:"text"`                            // Required: Text to translate
-	SourceLang         DeepLSourceLang     `json:"source_lang,omitempty"`           // Optional: Source language
-	TargetLang         DeepLTargetLang     `json:"target_lang"`                     // Required: Target language
-	Context            string              `json:"context,omitempty"`               // Optional: Context for translation
+	Text               []string            `json:"text"`                  // Required: Text to translate
+	SourceLang         DeepLSourceLang     `json:"source_lang,omitempty"` // Optional: Source language
+	TargetLang         DeepLTargetLang     `json:"target_lang"`           // Required: Target language
+	Context            string              `json:"context,omitempty"`     // Optional: Context for translation
 	ShowBilledChars    *bool               `json:"show_billed_characters,omitempty"`
 	SplitSentences     DeepLSplitSentences `json:"split_sentences,omitempty"`
 	PreserveFormatting *bool               `json:"preserve_formatting,omitempty"`
@@ -272,7 +272,12 @@ func NewDeepLTranslator(client *DeepLClient, source SourceLocale, target TargetL
 // translateText translates a single text string using the configured languages.
 // Returns the translated text and the number of billed characters.
 func (d *DeepLTranslator) translateText(text string) (string, int, error) {
-	return d.Client.TranslateText(text, d.Target.DeepLLang, d.Source.DeepLLang)
+	translated, billed, err := d.Client.TranslateText(text, d.Target.DeepLLang, d.Source.DeepLLang)
+	if err != nil {
+		return "", 0, err
+	}
+	translated = ToLowerURL(MatchCase(translated, text))
+	return translated, billed, nil
 }
 
 // translateBatch translates multiple texts using the configured languages.
@@ -292,7 +297,7 @@ func (d *DeepLTranslator) translateBatch(texts []string) ([]string, int, error) 
 	results := make([]string, len(resp.Translations))
 	totalBilled := 0
 	for i, t := range resp.Translations {
-		results[i] = t.Text
+		results[i] = ToLowerURL(MatchCase(t.Text, texts[i]))
 		totalBilled += t.BilledCharacters
 	}
 	return results, totalBilled, nil
