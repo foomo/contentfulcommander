@@ -4,6 +4,10 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+
+	"golang.org/x/text/runes"
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
 )
 
 func MatchCase(input, reference string) string {
@@ -39,11 +43,18 @@ func ToLowerURL(input string) string {
 	return input
 }
 
+// FixURI strips diacritics, lowercases, and replaces non-alphanumeric
+// characters with dashes, producing a clean URL-safe slug.
 func FixURI(input string) string {
 	input = strings.TrimSpace(input)
-	input = strings.ToLower(input)
-	// replace multiple spaces with single dash
-	re := regexp.MustCompile(`\s+`)
-	input = re.ReplaceAllString(input, "-")
-	return input
+	// Decompose into base characters + combining marks, then remove the marks
+	t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+	result, _, _ := transform.String(t, input)
+	result = strings.ToLower(result)
+	// Replace any character that isn't a letter, digit, or dash with a dash
+	result = regexp.MustCompile(`[^a-z0-9-]+`).ReplaceAllString(result, "-")
+	// Collapse multiple dashes and trim
+	result = regexp.MustCompile(`-{2,}`).ReplaceAllString(result, "-")
+	result = strings.Trim(result, "-")
+	return result
 }
