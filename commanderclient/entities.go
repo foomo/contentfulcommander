@@ -503,3 +503,38 @@ func (ae *AssetEntity) IsEntry() bool {
 func (ae *AssetEntity) IsAsset() bool {
 	return true
 }
+
+// GetParents returns all entities that reference this asset.
+// If contentTypes is non-nil, only parents matching those content types are returned.
+func (ae *AssetEntity) GetParents(contentTypes []string) *EntityCollection {
+	if ae.Client == nil {
+		return NewEntityCollection(nil)
+	}
+
+	targetID := ae.GetID()
+
+	var ctSet map[string]struct{}
+	if contentTypes != nil {
+		ctSet = make(map[string]struct{}, len(contentTypes))
+		for _, ct := range contentTypes {
+			ctSet[ct] = struct{}{}
+		}
+	}
+
+	var parents []Entity
+	for _, entity := range ae.Client.cache {
+		if entity.GetID() == targetID {
+			continue
+		}
+		if ctSet != nil {
+			if _, ok := ctSet[entity.GetContentType()]; !ok {
+				continue
+			}
+		}
+		if entityReferencesID(entity.GetFields(), targetID) {
+			parents = append(parents, entity)
+		}
+	}
+
+	return NewEntityCollection(parents)
+}

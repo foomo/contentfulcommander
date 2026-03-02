@@ -117,6 +117,10 @@ type Entity interface {
 
 	// IsAsset returns true if this entity is an Asset
 	IsAsset() bool
+
+	// GetParents returns all entities that reference this entity.
+	// If contentTypes is non-nil, only parents matching those content types are returned.
+	GetParents(contentTypes []string) *EntityCollection
 }
 
 // EntryEntity wraps a Contentful entry
