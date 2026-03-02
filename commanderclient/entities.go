@@ -266,6 +266,77 @@ func (ee *EntryEntity) IsAsset() bool {
 	return false
 }
 
+// GetParents returns all entities that reference this entry.
+// If contentTypes is non-nil, only parents matching those content types are returned.
+func (ee *EntryEntity) GetParents(contentTypes []string) *EntityCollection {
+	if ee.Client == nil {
+		return NewEntityCollection(nil)
+	}
+
+	targetID := ee.GetID()
+
+	// Build content type set for fast lookup
+	var ctSet map[string]struct{}
+	if contentTypes != nil {
+		ctSet = make(map[string]struct{}, len(contentTypes))
+		for _, ct := range contentTypes {
+			ctSet[ct] = struct{}{}
+		}
+	}
+
+	var parents []Entity
+	for _, entity := range ee.Client.cache {
+		if entity.GetID() == targetID {
+			continue
+		}
+		if ctSet != nil {
+			if _, ok := ctSet[entity.GetContentType()]; !ok {
+				continue
+			}
+		}
+		if entityReferencesID(entity.GetFields(), targetID) {
+			parents = append(parents, entity)
+		}
+	}
+
+	return NewEntityCollection(parents)
+}
+
+// entityReferencesID checks whether any field value (across all locales) contains a reference to the given ID.
+func entityReferencesID(fields map[string]any, targetID string) bool {
+	for _, fieldValue := range fields {
+		localeMap, ok := fieldValue.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, localeValue := range localeMap {
+			if valueReferencesID(localeValue, targetID) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// valueReferencesID checks whether a single field value (single ref or array of refs) references the given ID.
+func valueReferencesID(value any, targetID string) bool {
+	switch v := value.(type) {
+	case map[string]any:
+		if sysData, ok := v["sys"].(map[string]any); ok {
+			if id, ok := sysData["id"].(string); ok && id == targetID {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range v {
+			if valueReferencesID(item, targetID) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // AssetEntity implementation
 
 func (ae *AssetEntity) GetID() string {

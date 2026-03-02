@@ -317,6 +317,195 @@ func TestFilters(t *testing.T) {
 	}
 }
 
+func TestGetParents(t *testing.T) {
+	client := newMigrationClient("test-key", "test-space", "master")
+
+	// Target entry — the one we'll look for parents of
+	target := &EntryEntity{
+		Entry: &contentful.Entry{
+			Sys: &contentful.Sys{
+				ID:      "child-1",
+				Version: 1,
+				ContentType: &contentful.ContentType{
+					Sys: &contentful.Sys{ID: "article"},
+				},
+			},
+			Fields: map[string]any{},
+		},
+		Client: client,
+	}
+
+	// Parent with a single reference to the target
+	parentSingle := &EntryEntity{
+		Entry: &contentful.Entry{
+			Sys: &contentful.Sys{
+				ID:      "parent-single",
+				Version: 1,
+				ContentType: &contentful.ContentType{
+					Sys: &contentful.Sys{ID: "page"},
+				},
+			},
+			Fields: map[string]any{
+				"hero": map[string]any{
+					"en-US": map[string]any{
+						"sys": map[string]any{
+							"id":   "child-1",
+							"type": "Link",
+						},
+					},
+				},
+			},
+		},
+		Client: client,
+	}
+
+	// Parent with an array of references containing the target
+	parentArray := &EntryEntity{
+		Entry: &contentful.Entry{
+			Sys: &contentful.Sys{
+				ID:      "parent-array",
+				Version: 1,
+				ContentType: &contentful.ContentType{
+					Sys: &contentful.Sys{ID: "category"},
+				},
+			},
+			Fields: map[string]any{
+				"items": map[string]any{
+					"en-US": []any{
+						map[string]any{
+							"sys": map[string]any{
+								"id":   "unrelated-id",
+								"type": "Link",
+							},
+						},
+						map[string]any{
+							"sys": map[string]any{
+								"id":   "child-1",
+								"type": "Link",
+							},
+						},
+					},
+				},
+			},
+		},
+		Client: client,
+	}
+
+	// Entry that does NOT reference the target
+	unrelated := &EntryEntity{
+		Entry: &contentful.Entry{
+			Sys: &contentful.Sys{
+				ID:      "unrelated",
+				Version: 1,
+				ContentType: &contentful.ContentType{
+					Sys: &contentful.Sys{ID: "page"},
+				},
+			},
+			Fields: map[string]any{
+				"hero": map[string]any{
+					"en-US": map[string]any{
+						"sys": map[string]any{
+							"id":   "other-entry",
+							"type": "Link",
+						},
+					},
+				},
+			},
+		},
+		Client: client,
+	}
+
+	// Populate the client cache
+	client.cache["child-1"] = target
+	client.cache["parent-single"] = parentSingle
+	client.cache["parent-array"] = parentArray
+	client.cache["unrelated"] = unrelated
+
+	// nil contentTypes — returns all parents
+	t.Run("all parents", func(t *testing.T) {
+		parents := target.GetParents(nil)
+		if parents.Count() != 2 {
+			t.Errorf("Expected 2 parents, got %d", parents.Count())
+		}
+	})
+
+	// Filter by content type
+	t.Run("filter by content type", func(t *testing.T) {
+		parents := target.GetParents([]string{"page"})
+		if parents.Count() != 1 {
+			t.Errorf("Expected 1 parent of type 'page', got %d", parents.Count())
+		}
+		items := parents.Get()
+		if len(items) != 1 || items[0].GetID() != "parent-single" {
+			t.Errorf("Expected parent-single, got %v", items)
+		}
+	})
+
+	// Filter with non-matching content type
+	t.Run("no matching content type", func(t *testing.T) {
+		parents := target.GetParents([]string{"nonexistent"})
+		if parents.Count() != 0 {
+			t.Errorf("Expected 0 parents, got %d", parents.Count())
+		}
+	})
+
+	// Entry with no parents
+	t.Run("no parents", func(t *testing.T) {
+		parents := unrelated.GetParents(nil)
+		if parents.Count() != 0 {
+			t.Errorf("Expected 0 parents, got %d", parents.Count())
+		}
+	})
+
+	// Nil client
+	t.Run("nil client", func(t *testing.T) {
+		orphan := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{ID: "orphan"},
+			},
+		}
+		parents := orphan.GetParents(nil)
+		if parents.Count() != 0 {
+			t.Errorf("Expected 0 parents for nil client, got %d", parents.Count())
+		}
+	})
+
+	// Reference in a non-default locale
+	t.Run("reference in another locale", func(t *testing.T) {
+		parentDE := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:      "parent-de",
+					Version: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "page"},
+					},
+				},
+				Fields: map[string]any{
+					"hero": map[string]any{
+						"de-DE": map[string]any{
+							"sys": map[string]any{
+								"id":   "child-1",
+								"type": "Link",
+							},
+						},
+					},
+				},
+			},
+			Client: client,
+		}
+		client.cache["parent-de"] = parentDE
+
+		parents := target.GetParents(nil)
+		if parents.Count() != 3 {
+			t.Errorf("Expected 3 parents (including de-DE ref), got %d", parents.Count())
+		}
+
+		// Clean up
+		delete(client.cache, "parent-de")
+	})
+}
+
 func TestPublishingStatus(t *testing.T) {
 	// Test draft status (PublishedVersion = 0)
 	draftEntry := &EntryEntity{

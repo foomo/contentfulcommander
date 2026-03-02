@@ -247,6 +247,14 @@ tagEntities := entity.GetFieldValueAsReferencedEntities("tags", commanderclient.
 tagEntities.ForEach(func(tagEntity commanderclient.Entity) {
     fmt.Printf("Tag: %s\n", tagEntity.GetFieldValueAsString("name", commanderclient.Locale("en")))
 })
+
+// Reverse lookup: find all entities that reference this entry
+// Returns parents across all content types
+entryEntity := entity.(*commanderclient.EntryEntity)
+allParents := entryEntity.GetParents(nil)
+
+// Filter parents by content type
+pageParents := entryEntity.GetParents([]string{"page", "landingPage"})
 ```
 
 ### Advanced Field Access
