@@ -798,6 +798,12 @@ log.Printf("Processed %d entities with %d errors",
 - `github.com/foomo/contentful`: Contentful Go SDK
 - Standard Go library only
 
+## How to Contribute
+
+Contributions are welcome! Please read the [contributing guide](CONTRIBUTING.md).
+
+![Contributors](https://contributors-table.vercel.app/image?repo=foomo/contentfulcommander&width=50&columns=15)
+
 ## License
 
 Distributed under MIT License, please see license file within the code for more details.
