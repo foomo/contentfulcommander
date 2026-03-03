@@ -16,13 +16,13 @@ const (
 
 // Migration operation constants
 const (
-	OperationCreate         = "create"
-	OperationUpsert         = "upsert"
-	OperationUpdate         = "update"
-	OperationUpsertPublish  = "upsert_publish"
-	OperationDelete         = "delete"
-	OperationPublish        = "publish"
-	OperationUnpublish      = "unpublish"
+	OperationCreate        = "create"
+	OperationUpsert        = "upsert"
+	OperationUpdate        = "update"
+	OperationUpsertPublish = "upsert_publish"
+	OperationDelete        = "delete"
+	OperationPublish       = "publish"
+	OperationUnpublish     = "unpublish"
 )
 
 // Locale represents a Contentful locale code

@@ -8,14 +8,27 @@ Contentful Commander — a Go library and CLI for Contentful CMA migrations. Pro
 
 **Go 1.25** · module `github.com/foomo/contentfulcommander`
 
+## Tooling
+
+- **mise** (`.mise.toml`) — manages tool versions: lefthook, golangci-lint
+- **lefthook** (`.lefthook.yaml`) — git hooks: pre-commit (branch naming `feature/`|`fix/`, golangci fmt/lint), commit-msg (conventional commits), post-checkout (mise install)
+- **dependabot** (`.github/dependabot.yml`) — automated dependency updates for GitHub Actions and Go modules
+
 ## Commands
 
 ```bash
-make build        # Build binary to bin/contenfulcommander
-make install      # Install to $GOPATH/bin
-make test         # go test ./...
-make lint         # golangci-lint run (40+ linters, 5m timeout)
+make check        # Run tidy, generate, lint, test (full CI check)
+make build        # Build binary to bin/contenfulcommander (with -tags=safe)
+make install      # Install to $GOPATH/bin (with -tags=safe)
+make test         # go test -tags=safe -coverprofile=coverage.out
+make test.race    # go test with -race flag
+make test.update  # go test with -update flag
+make lint         # golangci-lint run
 make lint.fix     # golangci-lint run --fix
+make tidy         # go mod tidy
+make generate     # go generate ./...
+make outdated     # Show outdated direct dependencies
+make godocs       # Open go docs
 
 # Run a single test
 go test ./commanderclient -run TestName
@@ -48,6 +61,8 @@ Environment variables: `CONTENTFUL_CMAKEY`, `CONTENTFUL_SPACE_ID`, `CONTENTFUL_E
 ## Conventions
 
 - Local imports grouped under `github.com/foomo/contentfulcommander` (enforced by goimports)
-- Max line length: 150 characters
 - Tabs for indentation, trailing whitespace trimmed, LF line endings
-- `golangci-lint` config in `.golangci.yml` — diagnostic and style tags enabled, performance/experimental/opinionated disabled
+- Build tag: `-tags=safe` used across build, install, and test targets
+- `golangci-lint` v2 config in `.golangci.yml` — `default: all` with explicit disable list; formatters: gofmt, goimports
+- Branch names must follow `feature/` or `fix/` prefix convention (enforced by lefthook pre-commit hook)
+- Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/) format: `type(scope?): subject` (enforced by lefthook commit-msg hook). Valid types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `style`, `test`, `sec`, `wip`, `revert`

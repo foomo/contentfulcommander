@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/foomo/contentful"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Helper to create a test entry with fields
@@ -570,24 +572,16 @@ func TestDeepLTranslator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Translate failed: %v", err)
 	}
-	if result != "[EN] Test" {
-		t.Errorf("Expected '[EN] Test', got '%s'", result)
-	}
-	if billed != 4 {
-		t.Errorf("Expected 4 billed characters, got %d", billed)
-	}
+	assert.Equal(t, "[en] test", result)
+	assert.Equal(t, 4, billed)
 
 	// Test batch translation
 	results, totalBilled, err := translator.TranslateBatch([]string{"One", "Two"})
-	if err != nil {
-		t.Fatalf("TranslateBatch failed: %v", err)
-	}
-	if len(results) != 2 || results[0] != "[EN] One" || results[1] != "[EN] Two" {
-		t.Errorf("Unexpected batch results: %v", results)
-	}
-	if totalBilled != 6 { // "One" (3) + "Two" (3)
-		t.Errorf("Expected 6 total billed characters, got %d", totalBilled)
-	}
+	require.NoError(t, err)
+	assert.Len(t, results, 2)
+	assert.Equal(t, "[en] one", results[0])
+	assert.Equal(t, "[en] two", results[1])
+	assert.Equal(t, 6, totalBilled)
 }
 
 func TestRichTextInternal_ExtractAndReplace(t *testing.T) {
