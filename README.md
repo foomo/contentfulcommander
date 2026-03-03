@@ -1,10 +1,9 @@
-[![Build Status](https://github.com/foomo/contentfulcommander/actions/workflows/pr.yml/badge.svg?branch=main&event=push)](https://github.com/foomo/contentfulcommander/actions/workflows/pr.yml)
+[![Build Status](https://github.com/foomo/contentfulcommander/actions/workflows/test.yml/badge.svg?branch=main&event=push)](https://github.com/foomo/contentfulcommander/actions/workflows/pr.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/foomo/contentfulcommander)](https://goreportcard.com/report/github.com/foomo/contentfulcommander)
-[![Coverage Status](https://coveralls.io/repos/github/foomo/contentfulcommander/badge.svg?branch=main&)](https://coveralls.io/github/foomo/contentfulcommander?branch=main)
 [![GoDoc](https://godoc.org/github.com/foomo/contentfulcommander?status.svg)](https://godoc.org/github.com/foomo/contentfulcommander)
 
 <p align="center">
-  <img alt="sesamy" src=".github/assets/contentfulcommander.png"/>
+  <img alt="contentfulcommander" src="docs/public/logo.png" width="400" height="400"/>
 </p>
 
 # Contentful Commander
@@ -34,26 +33,26 @@ package main
 
 import (
     "log"
-    
+
     "github.com/foomo/contentfulcommander/commanderclient"
 )
 
 func main() {
     // Load config from environment variables
     config := commanderclient.LoadConfigFromEnv()
-    
+
     // Initialize ready-to-use client with logger and loaded space model
     client, logger, err := commanderclient.Init(config)
     if err != nil {
         log.Fatal(err)
     }
-    
+
     // Filter entities
     entries := client.FilterEntities(
         commanderclient.FilterByContentType("product"),
         commanderclient.FilterPublished(),
     )
-    
+
     // Process entities
     entries.ForEach(func(entity commanderclient.Entity) {
         logger.Info("Processing %s", entity.GetID())
@@ -78,31 +77,31 @@ type Entity interface {
     GetVersion() int
     IsPublished() bool
     GetPublishingStatus() string  // "draft", "published", or "changed"
-    
+
     // Field access methods
     GetFields() map[string]any
     GetFieldValue(fieldName string, locale Locale) any
     GetFieldValueWithFallback(fieldName string, locale Locale, defaultLocale Locale) any
-    
+
     // Type-safe field access (primarily for entries)
     GetFieldValueAsString(fieldName string, locale Locale) string
     GetFieldValueAsFloat64(fieldName string, locale Locale) float64
     GetFieldValueAsBool(fieldName string, locale Locale) bool
-    
+
     // Reference handling
     GetFieldValueAsReference(fieldName string, locale Locale) *contentful.Entry
     GetFieldValueAsReferencedEntity(fieldName string, locale Locale) (Entity, bool)
     GetFieldValueAsReferences(fieldName string, locale Locale) []*contentful.Entry
     GetFieldValueAsReferencedEntities(fieldName string, locale Locale) *EntityCollection
-    
+
     // Advanced field access
     GetFieldValueInto(fieldName string, locale Locale, target any) error
-    
+
     // Entity-specific methods
     GetTitle(locale Locale) string
     GetDescription(locale Locale) string
     GetFile(locale Locale) *contentful.File
-    
+
     // Utility methods
     SetFieldValue(fieldName string, locale Locale, value any)
     GetSys() *contentful.Sys
@@ -194,7 +193,7 @@ statusCounts := collection.CountByPublishingStatus()
 
 // Statistics
 stats := collection.GetStats()
-fmt.Printf("Total: %d, Entries: %d, Assets: %d\n", 
+fmt.Printf("Total: %d, Entries: %d, Assets: %d\n",
     stats.TotalCount, stats.EntryCount, stats.AssetCount)
 
 // Migration operations
@@ -507,10 +506,10 @@ assets.ForEach(func(asset commanderclient.Entity) {
     // Get asset title for different locales
     titleEN := asset.GetTitle(commanderclient.Locale("en"))
     titleDE := asset.GetTitle(commanderclient.Locale("de"))
-    
+
     // Get asset description
     description := asset.GetDescription(commanderclient.Locale("en"))
-    
+
     // Get file information
     file := asset.GetFile(commanderclient.Locale("en"))
     if file != nil {
@@ -718,7 +717,7 @@ package main
 
 import (
     "log"
-    
+
     "github.com/foomo/contentfulcommander"
 )
 
@@ -729,30 +728,30 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    
+
     // Get entities as collections
     allEntities := client.GetAllEntities()
     entries := client.GetEntries()
     assets := client.GetAssets()
-    
+
     // Filter entities
     products := client.FilterEntities(
         commanderclient.FilterByContentType("product"),
         commanderclient.FilterPublished(),
     )
-    
+
     // Process entries with type-safe field access
     products.ForEach(func(entity commanderclient.Entity) {
         title := entity.GetFieldValueAsString("title", commanderclient.Locale("en"))
         price := entity.GetFieldValueAsFloat64("price", commanderclient.Locale("en"))
-        
+
         // Handle references
         if categoryEntity, found := entity.GetFieldValueAsReferencedEntity("category", commanderclient.Locale("en")); found {
             categoryName := categoryEntity.GetFieldValueAsString("name", commanderclient.Locale("en"))
             logger.Info("Product: %s (Category: %s, Price: %.2f)", title, categoryName, price)
         }
     })
-    
+
     // Process assets
     assets.ForEach(func(asset commanderclient.Entity) {
         title := asset.GetTitle(commanderclient.Locale("en"))
@@ -772,14 +771,14 @@ The library provides comprehensive error handling:
 // Check operation results
 for _, result := range results {
     if !result.Success {
-        log.Printf("Failed to %s %s: %v", 
+        log.Printf("Failed to %s %s: %v",
             result.Operation, result.EntityID, result.Error)
     }
 }
 
 // Get summary statistics
 stats := client.GetStats()
-log.Printf("Processed %d entities with %d errors", 
+log.Printf("Processed %d entities with %d errors",
     stats.TotalEntities, stats.Errors)
 ```
 
