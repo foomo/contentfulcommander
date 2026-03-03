@@ -1,12 +1,19 @@
-# .goreleaser.yml
+version: 2
+
+project_name: contentfulcommander
+
 # Build customization
 builds:
   - binary: contentfulcommander
     main: ./main.go
     env:
       - CGO_ENABLED=0
+    flags:
+      - -trimpath
+      - -tags=safe
     ldflags:
-      - -s -w -X main.VERSION={{.Version}}
+      - -s -w
+      - -X main.VERSION={{.Version}}
     goos:
       - windows
       - darwin
@@ -18,18 +25,93 @@ builds:
       - goos: windows
         goarch: arm64
 
-# .goreleaser.yml
 archives:
-  - format: tar.gz
+  - formats: [ tar.gz ]
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [ zip ]
+
+release:
+  prerelease: auto
+
+changelog:
+  use: github-native
 
 brews:
-  # Reporitory to push the tap to.
-  - tap:
+  - repository:
       owner: foomo
       name: homebrew-tap
     caveats: "contentfulcommander help"
     homepage: "https://github.com/foomo/contentfulcommander"
     description: "A toolbox of non-trivial Contentful interactions"
+
+dockers:
+  - use: buildx
+    goos: linux
+    goarch: amd64
+    dockerfile: Dockerfile
+    image_templates:
+      - '{{ if eq .Prerelease "" }}foomo/contentfulcommander:latest-amd64{{ end }}'
+      - 'foomo/contentfulcommander:{{ .Version }}-amd64'
+      - '{{ if eq .Prerelease "" }}foomo/contentfulcommander:{{ .Major }}-amd64{{ end }}'
+      - '{{ if eq .Prerelease "" }}foomo/contentfulcommander:{{ .Major }}.{{ .Minor }}-amd64{{ end }}'
+    build_flag_templates:
+      - '--pull'
+      # https://github.com/opencontainers/image-spec/blob/main/annotations.md#pre-defined-annotation-keys
+      - '--label=org.opencontainers.image.title={{.ProjectName}}'
+      - '--label=org.opencontainers.image.description=A toolbox of non-trivial Contentful interactions'
+      - '--label=org.opencontainers.image.source={{.GitURL}}'
+      - '--label=org.opencontainers.image.url={{.GitURL}}'
+      - '--label=org.opencontainers.image.documentation={{.GitURL}}'
+      - '--label=org.opencontainers.image.created={{.Date}}'
+      - '--label=org.opencontainers.image.revision={{.FullCommit}}'
+      - '--label=org.opencontainers.image.version={{.Version}}'
+      - '--platform=linux/amd64'
+
+  - use: buildx
+    goos: linux
+    goarch: arm64
+    dockerfile: Dockerfile
+    image_templates:
+      - '{{ if eq .Prerelease "" }}foomo/contentfulcommander:latest-arm64{{ end }}'
+      - 'foomo/contentfulcommander:{{ .Version }}-arm64'
+      - '{{ if eq .Prerelease "" }}foomo/contentfulcommander:{{ .Major }}-arm64{{ end }}'
+      - '{{ if eq .Prerelease "" }}foomo/contentfulcommander:{{ .Major }}.{{ .Minor }}-arm64{{ end }}'
+    build_flag_templates:
+      - '--pull'
+      # https://github.com/opencontainers/image-spec/blob/main/annotations.md#pre-defined-annotation-keys
+      - '--label=org.opencontainers.image.title={{.ProjectName}}'
+      - '--label=org.opencontainers.image.description=Project Oriented SHELL'
+      - '--label=org.opencontainers.image.source={{.GitURL}}'
+      - '--label=org.opencontainers.image.url={{.GitURL}}'
+      - '--label=org.opencontainers.image.documentation={{.GitURL}}'
+      - '--label=org.opencontainers.image.created={{.Date}}'
+      - '--label=org.opencontainers.image.revision={{.FullCommit}}'
+      - '--label=org.opencontainers.image.version={{.Version}}'
+      - '--platform=linux/arm64'
+
+docker_manifests:
+  # basic
+  - name_template: 'foomo/contentfulcommander:latest'
+    image_templates:
+      - 'foomo/contentfulcommander:latest-amd64'
+      - 'foomo/contentfulcommander:latest-arm64'
+    skip_push: auto
+
+  - name_template: 'foomo/contentfulcommander:{{ .Version }}'
+    image_templates:
+      - 'foomo/contentfulcommander:{{ .Version }}-amd64'
+      - 'foomo/contentfulcommander:{{ .Version }}-arm64'
+    skip_push: auto
+
+  - name_template: 'foomo/contentfulcommander:{{ .Major }}'
+    image_templates:
+      - 'foomo/contentfulcommander:{{ .Major }}-amd64'
+      - 'foomo/contentfulcommander:{{ .Major }}-arm64'
+    skip_push: auto
+
+  - name_template: 'foomo/contentfulcommander:{{ .Major }}.{{ .Minor }}'
+    image_templates:
+      - 'foomo/contentfulcommander:{{ .Major }}.{{ .Minor }}-amd64'
+      - 'foomo/contentfulcommander:{{ .Major }}.{{ .Minor }}-arm64'
+    skip_push: auto
