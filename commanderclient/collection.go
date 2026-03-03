@@ -336,6 +336,11 @@ func (ec *EntityCollection) ToUpdateOperations() []MigrationOperation {
 	return ec.ToMigrationOperations(OperationUpdate)
 }
 
+// ToUpsertPublishOperations creates operations that upsert and always publish all entities
+func (ec *EntityCollection) ToUpsertPublishOperations() []MigrationOperation {
+	return ec.ToMigrationOperations(OperationUpsertPublish)
+}
+
 // ToPublishOperations creates publish operations for all entities
 func (ec *EntityCollection) ToPublishOperations() []MigrationOperation {
 	return ec.ToMigrationOperations(OperationPublish)

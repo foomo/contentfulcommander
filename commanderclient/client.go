@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"sync"
 	"time"
 
 	"github.com/foomo/contentful"
@@ -19,6 +20,7 @@ type MigrationClient struct {
 	environment string
 	spaceModel  *SpaceModel
 	cache       map[string]Entity
+	cacheMu     sync.Mutex
 	stats       *MigrationStats
 	concurrency int
 }
@@ -198,10 +200,12 @@ func (mc *MigrationClient) RefreshEntity(ctx context.Context, id string) error {
 	entry, err := mc.cma.Entries.Get(ctx, mc.spaceID, id)
 	if err == nil {
 		entity := &EntryEntity{Entry: entry}
+		mc.cacheMu.Lock()
 		mc.cache[id] = entity
 		if mc.spaceModel != nil {
 			mc.spaceModel.Entries[id] = entity
 		}
+		mc.cacheMu.Unlock()
 		return nil
 	}
 
@@ -209,10 +213,12 @@ func (mc *MigrationClient) RefreshEntity(ctx context.Context, id string) error {
 	asset, err := mc.cma.Assets.Get(ctx, mc.spaceID, id)
 	if err == nil {
 		entity := &AssetEntity{Asset: asset}
+		mc.cacheMu.Lock()
 		mc.cache[id] = entity
 		if mc.spaceModel != nil {
 			mc.spaceModel.Assets[id] = entity
 		}
+		mc.cacheMu.Unlock()
 		return nil
 	}
 
@@ -221,11 +227,13 @@ func (mc *MigrationClient) RefreshEntity(ctx context.Context, id string) error {
 
 // RemoveEntity removes an entity from the cache
 func (mc *MigrationClient) RemoveEntity(id string) {
+	mc.cacheMu.Lock()
 	delete(mc.cache, id)
 	if mc.spaceModel != nil {
 		delete(mc.spaceModel.Entries, id)
 		delete(mc.spaceModel.Assets, id)
 	}
+	mc.cacheMu.Unlock()
 }
 
 // loadLocales loads the locales for the space

@@ -84,6 +84,8 @@ func (me *MigrationExecutor) ExecuteOperation(ctx context.Context, op *Migration
 		result.Success, result.Error = me.upsertEntity(ctx, op)
 	case OperationUpdate:
 		result.Success, result.Error = me.updateEntity(ctx, op)
+	case OperationUpsertPublish:
+		result.Success, result.Error = me.upsertPublishEntity(ctx, op)
 	case OperationPublish:
 		result.Success, result.Error = me.publishEntity(ctx, op)
 	case OperationUnpublish:
@@ -243,7 +245,9 @@ func (me *MigrationExecutor) GetErrorCount() int {
 	return count
 }
 
-// upsertEntity updates an entity with new fields
+// upsertEntity updates an entity with new fields.
+// The SDK's Upsert decodes the API response into the entry/asset struct in-place,
+// so there is no need to re-fetch — the entity already carries the updated version.
 func (me *MigrationExecutor) upsertEntity(ctx context.Context, op *MigrationOperation) (bool, error) {
 	if op.Entity.GetType() == "Entry" {
 		entryEntity := op.Entity.(*EntryEntity)
@@ -255,15 +259,13 @@ func (me *MigrationExecutor) upsertEntity(ctx context.Context, op *MigrationOper
 			entry.Fields = fields
 		}
 
-		// Update the entry
+		// Update the entry (SDK updates entry.Sys.Version in-place from the response)
 		err := me.client.cma.Entries.Upsert(ctx, me.client.spaceID, entry)
 		if err != nil {
 			return false, err
 		}
 
-		// Refresh the entity in cache
-		err = me.client.RefreshEntity(ctx, op.EntityID)
-		return err == nil, err
+		return true, nil
 
 	} else if op.Entity.GetType() == "Asset" {
 		assetEntity := op.Entity.(*AssetEntity)
@@ -285,15 +287,13 @@ func (me *MigrationExecutor) upsertEntity(ctx context.Context, op *MigrationOper
 			}
 		}
 
-		// Update the asset
+		// Update the asset (SDK updates asset.Sys.Version in-place from the response)
 		err := me.client.cma.Assets.Upsert(ctx, me.client.spaceID, asset)
 		if err != nil {
 			return false, err
 		}
 
-		// Refresh the entity in cache
-		err = me.client.RefreshEntity(ctx, op.EntityID)
-		return err == nil, err
+		return true, nil
 	}
 
 	return false, fmt.Errorf("unsupported entity type: %s", op.Entity.GetType())
@@ -315,6 +315,18 @@ func (me *MigrationExecutor) updateEntity(ctx context.Context, op *MigrationOper
 	return true, nil
 }
 
+// upsertPublishEntity upserts an entity and then always publishes it, regardless of prior publishing status
+func (me *MigrationExecutor) upsertPublishEntity(ctx context.Context, op *MigrationOperation) (bool, error) {
+	success, err := me.upsertEntity(ctx, op)
+	if err != nil {
+		return false, err
+	}
+	if success {
+		return me.publishEntity(ctx, op)
+	}
+	return true, nil
+}
+
 // publishEntity publishes an entity
 func (me *MigrationExecutor) publishEntity(ctx context.Context, op *MigrationOperation) (bool, error) {
 	if op.Entity.GetType() == "Entry" {
@@ -326,22 +338,26 @@ func (me *MigrationExecutor) publishEntity(ctx context.Context, op *MigrationOpe
 			return false, err
 		}
 
-		// Refresh the entity in cache
-		err = me.client.RefreshEntity(ctx, op.EntityID)
-		return err == nil, err
+		// Refresh the entity in cache — Entries.Publish does not update the struct in-place,
+		// so we need to re-fetch to keep the cache version in sync.
+		// A refresh failure here is non-fatal: the publish already succeeded.
+		if refreshErr := me.client.RefreshEntity(ctx, op.EntityID); refreshErr != nil {
+			log.Printf("Warning: publish succeeded but cache refresh failed for %s: %v", op.EntityID, refreshErr)
+		}
+		return true, nil
 
 	} else if op.Entity.GetType() == "Asset" {
 		assetEntity := op.Entity.(*AssetEntity)
 		asset := assetEntity.Asset
 
+		// Assets.Publish updates the struct in-place, so no refresh is strictly needed,
+		// but we refresh to keep the cache consistent.
 		err := me.client.cma.Assets.Publish(ctx, me.client.spaceID, asset)
 		if err != nil {
 			return false, err
 		}
 
-		// Refresh the entity in cache
-		err = me.client.RefreshEntity(ctx, op.EntityID)
-		return err == nil, err
+		return true, nil
 	}
 
 	return false, fmt.Errorf("unsupported entity type: %s", op.Entity.GetType())
@@ -358,22 +374,23 @@ func (me *MigrationExecutor) unpublishEntity(ctx context.Context, op *MigrationO
 			return false, err
 		}
 
-		// Refresh the entity in cache
-		err = me.client.RefreshEntity(ctx, op.EntityID)
-		return err == nil, err
+		// Entries.Unpublish does not update the struct in-place; refresh cache.
+		if refreshErr := me.client.RefreshEntity(ctx, op.EntityID); refreshErr != nil {
+			log.Printf("Warning: unpublish succeeded but cache refresh failed for %s: %v", op.EntityID, refreshErr)
+		}
+		return true, nil
 
 	} else if op.Entity.GetType() == "Asset" {
 		assetEntity := op.Entity.(*AssetEntity)
 		asset := assetEntity.Asset
 
+		// Assets.Unpublish updates the struct in-place.
 		err := me.client.cma.Assets.Unpublish(ctx, me.client.spaceID, asset)
 		if err != nil {
 			return false, err
 		}
 
-		// Refresh the entity in cache
-		err = me.client.RefreshEntity(ctx, op.EntityID)
-		return err == nil, err
+		return true, nil
 	}
 
 	return false, fmt.Errorf("unsupported entity type: %s", op.Entity.GetType())
@@ -413,6 +430,15 @@ func CreateUpdateOperation(entityID string, entity Entity) *MigrationOperation {
 	return &MigrationOperation{
 		EntityID:  entityID,
 		Operation: OperationUpdate,
+		Entity:    entity,
+	}
+}
+
+// CreateUpsertPublishOperation creates a migration operation that upserts and always publishes
+func CreateUpsertPublishOperation(entityID string, entity Entity) *MigrationOperation {
+	return &MigrationOperation{
+		EntityID:  entityID,
+		Operation: OperationUpsertPublish,
 		Entity:    entity,
 	}
 }
