@@ -107,6 +107,9 @@ type Entity interface {
 	// GetFile returns the file information of the entity for the specified locale
 	GetFile(locale Locale) *contentful.File
 
+	// IsFieldNullOrEmpty returns true if the field value for the given locale is nil, an empty string, an empty map, or an empty slice
+	IsFieldNullOrEmpty(fieldName string, locale Locale) bool
+
 	// SetFieldValue sets the value of a field for a specific locale
 	SetFieldValue(fieldName string, locale Locale, value any)
 

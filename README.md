@@ -19,6 +19,7 @@ A Go library for Contentful migrations that provides a high-level interface for 
 - **Type-Safe Field Access**: Specialized methods for different field types (string, float64, bool, references)
 - **Reference Resolution**: Direct access to referenced entities with automatic broken reference handling
 - **Asset-Specific Methods**: Dedicated methods for asset title, description, and file access
+- **Null/Empty Field Detection**: First-class `IsFieldNullOrEmpty` check for nil, empty string, empty map, and empty slice values
 - **Flexible Filtering**: Filter entities by content type, publication status, CDA availability, timestamps, and custom criteria
 - **Collection Operations**: Chain operations like filtering, mapping, grouping, and reducing
 - **Migration Execution**: Execute batch operations with dry-run support, concurrent execution, and comprehensive error handling
@@ -98,6 +99,7 @@ type Entity interface {
 
     // Advanced field access
     GetFieldValueInto(fieldName string, locale Locale, target any) error
+    IsFieldNullOrEmpty(fieldName string, locale Locale) bool
 
     // Entity-specific methods
     GetTitle(locale Locale) string
@@ -292,6 +294,20 @@ allParents := entryEntity.GetParents(nil)
 
 // Filter parents by content type
 pageParents := entryEntity.GetParents([]string{"page", "landingPage"})
+```
+
+### Null/Empty Check
+
+```go
+// Check if a field value is nil, an empty string, an empty map, or an empty slice
+if entity.IsFieldNullOrEmpty("description", commanderclient.Locale("en")) {
+    log.Println("Description is missing or empty")
+}
+
+// Works with assets too (checks title, description, file)
+if asset.IsFieldNullOrEmpty("file", commanderclient.Locale("de")) {
+    log.Println("No German file uploaded")
+}
 ```
 
 ### Advanced Field Access

@@ -798,3 +798,119 @@ func TestCDAView(t *testing.T) {
 		}
 	})
 }
+
+func TestIsFieldNullOrEmpty(t *testing.T) {
+	t.Run("entry entity", func(t *testing.T) {
+		entry := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:      "test-entry",
+					Version: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+				Fields: map[string]any{
+					"title": map[string]any{
+						"en-US": "Hello",
+						"de-DE": "",
+					},
+					"body": map[string]any{
+						"en-US": map[string]any{},
+					},
+					"tags": map[string]any{
+						"en-US": []any{},
+						"de-DE": []any{"tag1"},
+					},
+				},
+			},
+		}
+
+		// nil field (field doesn't exist)
+		if !entry.IsFieldNullOrEmpty("nonexistent", "en-US") {
+			t.Error("Expected nonexistent field to be null or empty")
+		}
+
+		// non-empty string
+		if entry.IsFieldNullOrEmpty("title", "en-US") {
+			t.Error("Expected non-empty title to not be null or empty")
+		}
+
+		// empty string
+		if !entry.IsFieldNullOrEmpty("title", "de-DE") {
+			t.Error("Expected empty string title to be null or empty")
+		}
+
+		// nil locale (locale doesn't exist)
+		if !entry.IsFieldNullOrEmpty("title", "fr-FR") {
+			t.Error("Expected missing locale to be null or empty")
+		}
+
+		// empty map
+		if !entry.IsFieldNullOrEmpty("body", "en-US") {
+			t.Error("Expected empty map to be null or empty")
+		}
+
+		// empty slice
+		if !entry.IsFieldNullOrEmpty("tags", "en-US") {
+			t.Error("Expected empty slice to be null or empty")
+		}
+
+		// non-empty slice
+		if entry.IsFieldNullOrEmpty("tags", "de-DE") {
+			t.Error("Expected non-empty slice to not be null or empty")
+		}
+	})
+
+	t.Run("asset entity", func(t *testing.T) {
+		asset := &AssetEntity{
+			Asset: &contentful.Asset{
+				Sys: &contentful.Sys{
+					ID:      "test-asset",
+					Version: 1,
+				},
+				Fields: &contentful.FileFields{
+					Title: map[string]string{
+						"en-US": "My Asset",
+					},
+					Description: map[string]string{
+						"en-US": "",
+					},
+					File: map[string]*contentful.File{
+						"en-US": {URL: "https://example.com/file.png"},
+					},
+				},
+			},
+		}
+
+		// non-empty title
+		if asset.IsFieldNullOrEmpty("title", "en-US") {
+			t.Error("Expected non-empty title to not be null or empty")
+		}
+
+		// missing locale for title
+		if !asset.IsFieldNullOrEmpty("title", "de-DE") {
+			t.Error("Expected missing locale title to be null or empty")
+		}
+
+		// empty description
+		if !asset.IsFieldNullOrEmpty("description", "en-US") {
+			t.Error("Expected empty description to be null or empty")
+		}
+
+		// non-nil file
+		if asset.IsFieldNullOrEmpty("file", "en-US") {
+			t.Error("Expected non-nil file to not be null or empty")
+		}
+
+		// missing locale for file
+		if !asset.IsFieldNullOrEmpty("file", "de-DE") {
+			t.Error("Expected missing locale file to be null or empty")
+		}
+
+		// unknown field
+		if !asset.IsFieldNullOrEmpty("unknown", "en-US") {
+			t.Error("Expected unknown field to be null or empty")
+		}
+	})
+}

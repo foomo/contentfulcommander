@@ -8,6 +8,21 @@ import (
 	"github.com/foomo/contentful"
 )
 
+func isNullOrEmpty(value any) bool {
+	if value == nil {
+		return true
+	}
+	switch v := value.(type) {
+	case string:
+		return v == ""
+	case map[string]any:
+		return len(v) == 0
+	case []any:
+		return len(v) == 0
+	}
+	return false
+}
+
 // EntryEntity implementation
 
 func (ee *EntryEntity) GetID() string {
@@ -232,6 +247,10 @@ func (ee *EntryEntity) convertToReference(value any) *contentful.Entry {
 		}
 	}
 	return nil
+}
+
+func (ee *EntryEntity) IsFieldNullOrEmpty(fieldName string, locale Locale) bool {
+	return isNullOrEmpty(ee.GetFieldValue(fieldName, locale))
 }
 
 func (ee *EntryEntity) SetFieldValue(fieldName string, locale Locale, value any) {
@@ -473,6 +492,19 @@ func (ae *AssetEntity) GetFile(locale Locale) *contentful.File {
 		}
 	}
 	return nil
+}
+
+func (ae *AssetEntity) IsFieldNullOrEmpty(fieldName string, locale Locale) bool {
+	switch fieldName {
+	case "title":
+		return ae.GetTitle(locale) == ""
+	case "description":
+		return ae.GetDescription(locale) == ""
+	case "file":
+		return ae.GetFile(locale) == nil
+	default:
+		return true
+	}
 }
 
 func (ae *AssetEntity) SetFieldValue(fieldName string, locale Locale, value any) {
