@@ -1,6 +1,7 @@
 package commanderclient
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/foomo/contentful"
@@ -503,6 +504,304 @@ func TestGetParents(t *testing.T) {
 
 		// Clean up
 		delete(client.cache, "parent-de")
+	})
+}
+
+func TestGetReferrerPath(t *testing.T) {
+	// Helper to build an entry entity with fields referencing other IDs.
+	makeEntry := func(client *MigrationClient, id, ct string, fields map[string]any) *EntryEntity {
+		return &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:      id,
+					Version: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: ct},
+					},
+				},
+				Fields: fields,
+			},
+			Client: client,
+		}
+	}
+
+	linkRef := func(id string) map[string]any {
+		return map[string]any{"sys": map[string]any{"id": id, "type": "Link"}}
+	}
+
+	t.Run("linear path root -> mid -> leaf", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		root := makeEntry(client, "root", "page", map[string]any{
+			"children": map[string]any{"en-US": linkRef("mid")},
+		})
+		mid := makeEntry(client, "mid", "section", map[string]any{
+			"children": map[string]any{"en-US": linkRef("leaf")},
+		})
+		leaf := makeEntry(client, "leaf", "article", map[string]any{})
+
+		client.cache["root"] = root
+		client.cache["mid"] = mid
+		client.cache["leaf"] = leaf
+
+		path, err := leaf.GetReferrerPath([]string{"children"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 3 {
+			t.Fatalf("expected path length 3, got %d", len(path))
+		}
+		if path[0].GetID() != "root" || path[1].GetID() != "mid" || path[2].GetID() != "leaf" {
+			t.Errorf("expected [root, mid, leaf], got [%s, %s, %s]", path[0].GetID(), path[1].GetID(), path[2].GetID())
+		}
+	})
+
+	t.Run("no referrer returns self", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+		alone := makeEntry(client, "alone", "article", map[string]any{})
+		client.cache["alone"] = alone
+
+		path, err := alone.GetReferrerPath([]string{"children"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 1 || path[0].GetID() != "alone" {
+			t.Errorf("expected [alone], got %v", path)
+		}
+	})
+
+	t.Run("field name filtering excludes non-matching referrers", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		// parent references child via "hero" field, but we only search "children"
+		parent := makeEntry(client, "parent", "page", map[string]any{
+			"hero": map[string]any{"en-US": linkRef("child")},
+		})
+		child := makeEntry(client, "child", "article", map[string]any{})
+
+		client.cache["parent"] = parent
+		client.cache["child"] = child
+
+		path, err := child.GetReferrerPath([]string{"children"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 1 {
+			t.Errorf("expected [child] (field filtered), got length %d", len(path))
+		}
+	})
+
+	t.Run("StopAtEntityID truncates path", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		root := makeEntry(client, "root", "page", map[string]any{
+			"children": map[string]any{"en-US": linkRef("mid")},
+		})
+		mid := makeEntry(client, "mid", "section", map[string]any{
+			"children": map[string]any{"en-US": linkRef("leaf")},
+		})
+		leaf := makeEntry(client, "leaf", "article", map[string]any{})
+
+		client.cache["root"] = root
+		client.cache["mid"] = mid
+		client.cache["leaf"] = leaf
+
+		path, err := leaf.GetReferrerPath([]string{"children"}, StopAtEntityID("mid"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 2 {
+			t.Fatalf("expected path length 2, got %d", len(path))
+		}
+		if path[0].GetID() != "mid" || path[1].GetID() != "leaf" {
+			t.Errorf("expected [mid, leaf], got [%s, %s]", path[0].GetID(), path[1].GetID())
+		}
+	})
+
+	t.Run("StopAtContentType truncates path", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		root := makeEntry(client, "root", "page", map[string]any{
+			"children": map[string]any{"en-US": linkRef("mid")},
+		})
+		mid := makeEntry(client, "mid", "section", map[string]any{
+			"children": map[string]any{"en-US": linkRef("leaf")},
+		})
+		leaf := makeEntry(client, "leaf", "article", map[string]any{})
+
+		client.cache["root"] = root
+		client.cache["mid"] = mid
+		client.cache["leaf"] = leaf
+
+		path, err := leaf.GetReferrerPath([]string{"children"}, StopAtContentType("section"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 2 {
+			t.Fatalf("expected path length 2, got %d", len(path))
+		}
+		if path[0].GetID() != "mid" || path[1].GetID() != "leaf" {
+			t.Errorf("expected [mid, leaf], got [%s, %s]", path[0].GetID(), path[1].GetID())
+		}
+	})
+
+	t.Run("multiple referrers returns ErrAmbiguousPath", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		p1 := makeEntry(client, "p1", "page", map[string]any{
+			"children": map[string]any{"en-US": linkRef("child")},
+		})
+		p2 := makeEntry(client, "p2", "page", map[string]any{
+			"children": map[string]any{"en-US": linkRef("child")},
+		})
+		child := makeEntry(client, "child", "article", map[string]any{})
+
+		client.cache["p1"] = p1
+		client.cache["p2"] = p2
+		client.cache["child"] = child
+
+		_, err := child.GetReferrerPath([]string{"children"})
+		if !errors.Is(err, ErrAmbiguousPath) {
+			t.Errorf("expected ErrAmbiguousPath, got %v", err)
+		}
+	})
+
+	t.Run("cycle returns ErrCircularReference", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		a := makeEntry(client, "a", "page", map[string]any{
+			"children": map[string]any{"en-US": linkRef("b")},
+		})
+		b := makeEntry(client, "b", "page", map[string]any{
+			"children": map[string]any{"en-US": linkRef("a")},
+		})
+
+		client.cache["a"] = a
+		client.cache["b"] = b
+
+		_, err := a.GetReferrerPath([]string{"children"})
+		if !errors.Is(err, ErrCircularReference) {
+			t.Errorf("expected ErrCircularReference, got %v", err)
+		}
+	})
+
+	t.Run("nil client returns self", func(t *testing.T) {
+		orphan := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:      "orphan",
+					Version: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+				Fields: map[string]any{},
+			},
+		}
+
+		path, err := orphan.GetReferrerPath([]string{"children"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 1 || path[0].GetID() != "orphan" {
+			t.Errorf("expected [orphan], got %v", path)
+		}
+	})
+
+	t.Run("empty fieldNames returns self", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+		entry := makeEntry(client, "e1", "article", map[string]any{})
+		client.cache["e1"] = entry
+
+		path, err := entry.GetReferrerPath([]string{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 1 || path[0].GetID() != "e1" {
+			t.Errorf("expected [e1], got %v", path)
+		}
+	})
+
+	t.Run("asset as starting entity", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		parent := makeEntry(client, "parent", "page", map[string]any{
+			"image": map[string]any{"en-US": linkRef("asset-1")},
+		})
+		asset := &AssetEntity{
+			Asset: &contentful.Asset{
+				Sys: &contentful.Sys{
+					ID:      "asset-1",
+					Version: 1,
+				},
+				Fields: &contentful.FileFields{
+					Title: map[string]string{"en-US": "My Asset"},
+				},
+			},
+			Client: client,
+		}
+
+		client.cache["parent"] = parent
+		client.cache["asset-1"] = asset
+
+		path, err := asset.GetReferrerPath([]string{"image"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 2 {
+			t.Fatalf("expected path length 2, got %d", len(path))
+		}
+		if path[0].GetID() != "parent" || path[1].GetID() != "asset-1" {
+			t.Errorf("expected [parent, asset-1], got [%s, %s]", path[0].GetID(), path[1].GetID())
+		}
+	})
+
+	t.Run("reference in non-default locale still found", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		parent := makeEntry(client, "parent", "page", map[string]any{
+			"children": map[string]any{
+				"de-DE": linkRef("child"),
+			},
+		})
+		child := makeEntry(client, "child", "article", map[string]any{})
+
+		client.cache["parent"] = parent
+		client.cache["child"] = child
+
+		path, err := child.GetReferrerPath([]string{"children"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 2 {
+			t.Fatalf("expected path length 2, got %d", len(path))
+		}
+		if path[0].GetID() != "parent" {
+			t.Errorf("expected parent at index 0, got %s", path[0].GetID())
+		}
+	})
+
+	t.Run("stop condition entity not in chain returns full path", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		root := makeEntry(client, "root", "page", map[string]any{
+			"children": map[string]any{"en-US": linkRef("leaf")},
+		})
+		leaf := makeEntry(client, "leaf", "article", map[string]any{})
+
+		client.cache["root"] = root
+		client.cache["leaf"] = leaf
+
+		path, err := leaf.GetReferrerPath([]string{"children"}, StopAtEntityID("nonexistent"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 2 {
+			t.Fatalf("expected path length 2, got %d", len(path))
+		}
+		if path[0].GetID() != "root" || path[1].GetID() != "leaf" {
+			t.Errorf("expected [root, leaf], got [%s, %s]", path[0].GetID(), path[1].GetID())
+		}
 	})
 }
 

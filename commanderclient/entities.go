@@ -2,11 +2,119 @@ package commanderclient
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/foomo/contentful"
 )
+
+var (
+	// ErrCircularReference is returned when a cycle is detected while walking the referrer path.
+	ErrCircularReference = errors.New("circular reference detected in referrer path")
+	// ErrAmbiguousPath is returned when multiple referrers are found at one step of the referrer path.
+	ErrAmbiguousPath = errors.New("ambiguous referrer path: multiple referrers found at one step")
+)
+
+// PathOption configures the behavior of GetReferrerPath.
+type PathOption func(*pathConfig)
+
+type pathConfig struct {
+	stopAtEntityID    string
+	stopAtContentType string
+}
+
+// StopAtEntityID makes GetReferrerPath stop walking when the entity with the given ID is reached.
+func StopAtEntityID(id string) PathOption {
+	return func(cfg *pathConfig) {
+		cfg.stopAtEntityID = id
+	}
+}
+
+// StopAtContentType makes GetReferrerPath stop walking when an entity with the given content type is reached.
+func StopAtContentType(ct string) PathOption {
+	return func(cfg *pathConfig) {
+		cfg.stopAtContentType = ct
+	}
+}
+
+// entityReferencesIDViaFields checks whether any of the specified fields (across all locales) reference the given ID.
+func entityReferencesIDViaFields(fields map[string]any, targetID string, fieldNames []string) bool {
+	for _, name := range fieldNames {
+		fieldValue, ok := fields[name]
+		if !ok {
+			continue
+		}
+		localeMap, ok := fieldValue.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, localeValue := range localeMap {
+			if valueReferencesID(localeValue, targetID) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// getReferrerPath walks up the referrer chain through the specified fields and returns the path from root to self.
+func getReferrerPath(client *MigrationClient, startID string, startEntity Entity, fieldNames []string, opts ...PathOption) ([]Entity, error) {
+	if client == nil || len(fieldNames) == 0 {
+		return []Entity{startEntity}, nil
+	}
+
+	var cfg pathConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	path := []Entity{startEntity}
+	visited := map[string]struct{}{startID: {}}
+	currentID := startID
+
+	for {
+		var referrers []Entity
+		for _, entity := range client.cache {
+			if entity.GetID() == currentID {
+				continue
+			}
+			if entityReferencesIDViaFields(entity.GetFields(), currentID, fieldNames) {
+				referrers = append(referrers, entity)
+			}
+		}
+
+		if len(referrers) == 0 {
+			break
+		}
+		if len(referrers) > 1 {
+			return nil, ErrAmbiguousPath
+		}
+
+		referrer := referrers[0]
+		referrerID := referrer.GetID()
+
+		if _, seen := visited[referrerID]; seen {
+			return nil, ErrCircularReference
+		}
+
+		visited[referrerID] = struct{}{}
+		path = append(path, referrer)
+
+		if cfg.stopAtEntityID != "" && referrerID == cfg.stopAtEntityID {
+			break
+		}
+		if cfg.stopAtContentType != "" && referrer.GetContentType() == cfg.stopAtContentType {
+			break
+		}
+
+		currentID = referrerID
+	}
+
+	slices.Reverse(path)
+	return path, nil
+}
 
 func isNullOrEmpty(value any) bool {
 	if value == nil {
@@ -293,6 +401,11 @@ func (ee *EntryEntity) CDAView() Entity {
 	return ee.cdaView
 }
 
+// GetReferrerPath walks up the referrer chain through the specified fields and returns the path from root to self.
+func (ee *EntryEntity) GetReferrerPath(fieldNames []string, opts ...PathOption) ([]Entity, error) {
+	return getReferrerPath(ee.Client, ee.GetID(), ee, fieldNames, opts...)
+}
+
 // GetParents returns all entities that reference this entry.
 // If contentTypes is non-nil, only parents matching those content types are returned.
 func (ee *EntryEntity) GetParents(contentTypes []string) *EntityCollection {
@@ -550,6 +663,11 @@ func (ae *AssetEntity) HasCDAView() bool {
 
 func (ae *AssetEntity) CDAView() Entity {
 	return ae.cdaView
+}
+
+// GetReferrerPath walks up the referrer chain through the specified fields and returns the path from root to self.
+func (ae *AssetEntity) GetReferrerPath(fieldNames []string, opts ...PathOption) ([]Entity, error) {
+	return getReferrerPath(ae.Client, ae.GetID(), ae, fieldNames, opts...)
 }
 
 // GetParents returns all entities that reference this asset.

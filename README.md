@@ -18,6 +18,7 @@ A Go library for Contentful migrations that provides a high-level interface for 
 - **Locale-Aware Operations**: Native support for Contentful's localization system with locale-specific field access
 - **Type-Safe Field Access**: Specialized methods for different field types (string, float64, bool, references)
 - **Reference Resolution**: Direct access to referenced entities with automatic broken reference handling
+- **Referrer Path Traversal**: Walk up the referrer chain to trace how an entity is reached, with stop conditions and cycle detection
 - **Asset-Specific Methods**: Dedicated methods for asset title, description, and file access
 - **Null/Empty Field Detection**: First-class `IsFieldNullOrEmpty` check for nil, empty string, empty map, and empty slice values
 - **Flexible Filtering**: Filter entities by content type, publication status, CDA availability, timestamps, and custom criteria
@@ -105,6 +106,10 @@ type Entity interface {
     GetTitle(locale Locale) string
     GetDescription(locale Locale) string
     GetFile(locale Locale) *contentful.File
+
+    // Graph traversal
+    GetParents(contentTypes []string) *EntityCollection               // direct referrers
+    GetReferrerPath(fieldNames []string, opts ...PathOption) ([]Entity, error) // full referrer chain (root → self)
 
     // CDA (Content Delivery API) view
     HasCDAView() bool       // true if a published CDA snapshot is attached
@@ -289,11 +294,46 @@ tagEntities.ForEach(func(tagEntity commanderclient.Entity) {
 
 // Reverse lookup: find all entities that reference this entry
 // Returns parents across all content types
-entryEntity := entity.(*commanderclient.EntryEntity)
-allParents := entryEntity.GetParents(nil)
+allParents := entity.GetParents(nil)
 
 // Filter parents by content type
-pageParents := entryEntity.GetParents([]string{"page", "landingPage"})
+pageParents := entity.GetParents([]string{"page", "landingPage"})
+```
+
+### Referrer Path Traversal
+
+Walk up the referrer chain through specific link fields to get the full path from root to a given entity. Useful for building breadcrumbs, validating content trees, or understanding how an entity is reached.
+
+```go
+// Get the full path from root to this entity, following "children" link fields
+path, err := article.GetReferrerPath([]string{"children"})
+// path = [page, section, article]
+
+// Stop at a specific content type (e.g. only care about section → leaf)
+path, err := article.GetReferrerPath([]string{"children"}, commanderclient.StopAtContentType("section"))
+// path = [section, article]
+
+// Stop at a specific entity ID
+path, err := article.GetReferrerPath([]string{"children"}, commanderclient.StopAtEntityID("section-42"))
+
+// Multiple field names — matches if any of the listed fields contain the reference
+path, err := asset.GetReferrerPath([]string{"hero", "image", "thumbnail"})
+```
+
+The method returns sentinel errors for two edge cases:
+
+```go
+// Multiple entities reference the same child through the searched fields
+_, err := entity.GetReferrerPath([]string{"children"})
+if errors.Is(err, commanderclient.ErrAmbiguousPath) {
+    // handle ambiguity
+}
+
+// A cycle is detected in the referrer chain
+_, err := entity.GetReferrerPath([]string{"children"})
+if errors.Is(err, commanderclient.ErrCircularReference) {
+    // handle cycle
+}
 ```
 
 ### Null/Empty Check

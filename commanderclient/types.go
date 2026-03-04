@@ -126,6 +126,12 @@ type Entity interface {
 	// If contentTypes is non-nil, only parents matching those content types are returned.
 	GetParents(contentTypes []string) *EntityCollection
 
+	// GetReferrerPath walks up the referrer chain through the specified fields
+	// and returns the ordered path from root to self.
+	// Returns ErrAmbiguousPath if multiple referrers are found at any step.
+	// Returns ErrCircularReference if a cycle is detected.
+	GetReferrerPath(fieldNames []string, opts ...PathOption) ([]Entity, error)
+
 	// HasCDAView returns true if this entity has a CDA (Content Delivery API) view attached.
 	// The CDA view represents the published/live version of the entity.
 	HasCDAView() bool
