@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Contentful Commander — a Go library and CLI for Contentful CMA migrations. Provides a unified `Entity` interface over entries and assets, locale-aware field access, batch migration execution, and DeepL translation integration.
+Contentful Commander — a Go library and CLI for Contentful CMA migrations. Provides a unified `Entity` interface over entries and assets, locale-aware field access, dual CMA/CDA loading with CDA views, batch migration execution, and DeepL translation integration.
 
 **Go 1.25** · module `github.com/foomo/contentfulcommander`
 
@@ -42,7 +42,7 @@ Single library package (`commanderclient/`) with a thin CLI entry point (`main.g
 
 - **`Entity` interface** (`types.go`) — unified API over `EntryEntity` and `AssetEntity`. All field access is locale-aware with fallback support. Publishing status derived from version arithmetic: `draft` (PublishedVersion==0), `published` (Version-PublishedVersion==1), `changed` (>1).
 
-- **`MigrationClient`** (`client.go`) — wraps the foomo/contentful CMA SDK. `LoadSpaceModel()` fetches locales, content types, entries, and assets concurrently into a `SpaceModel` cache. Provides entity lookups and filtering.
+- **`MigrationClient`** (`client.go`) — wraps the foomo/contentful CMA SDK. Optionally pairs a CDA client for published-view access. `LoadSpaceModel()` fetches locales, content types, entries, and assets concurrently into a `SpaceModel` cache. When a CDA key is provided, CDA views are loaded and attached to each entity (`entity.HasCDAView()`, `entity.CDAView()`). Set `Config.SkipAssets = true` to skip asset loading entirely. Provides entity lookups and filtering.
 
 - **`EntityCollection`** (`collection.go`) — chainable operations on entity sets: filtering (50+ built-in filters), pagination, concurrent iteration (`ForEachConcurrent`), field extraction, grouping, stats, and conversion to migration operations.
 
@@ -56,7 +56,7 @@ Single library package (`commanderclient/`) with a thin CLI entry point (`main.g
 
 ### Configuration
 
-Environment variables: `CONTENTFUL_CMAKEY`, `CONTENTFUL_SPACE_ID`, `CONTENTFUL_ENVIRONMENT`, `CONTENTFUL_VERBOSE`. Loaded via `LoadConfigFromEnv()` in `utils.go`.
+Environment variables: `CONTENTFUL_CMAKEY`, `CONTENTFUL_CDAKEY` (optional, enables CDA views), `CONTENTFUL_SPACE_ID`, `CONTENTFUL_ENVIRONMENT`, `CONTENTFUL_VERBOSE`. Loaded via `LoadConfigFromEnv()` in `utils.go`. `Config.SkipAssets` is code-only (no env var).
 
 ## Conventions
 

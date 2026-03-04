@@ -10,15 +10,18 @@ import (
 // Config holds configuration for the migration library
 type Config struct {
 	CMAToken    string
+	CDAToken    string
 	SpaceID     string
 	Environment string
 	Verbose     bool
+	SkipAssets  bool
 }
 
 // LoadConfigFromEnv loads configuration from environment variables
 func LoadConfigFromEnv() *Config {
 	return &Config{
 		CMAToken:    os.Getenv("CONTENTFUL_CMAKEY"),
+		CDAToken:    os.Getenv("CONTENTFUL_CDAKEY"),
 		SpaceID:     os.Getenv("CONTENTFUL_SPACE_ID"),
 		Environment: getEnvOrDefault("CONTENTFUL_ENVIRONMENT", "dev"),
 		Verbose:     getEnvOrDefault("CONTENTFUL_VERBOSE", "true") == "true",
@@ -43,7 +46,8 @@ func Init(config *Config) (*MigrationClient, *Logger, error) {
 	}
 
 	// Create client
-	client := newMigrationClient(config.CMAToken, config.SpaceID, config.Environment)
+	client := newMigrationClient(config.CMAToken, config.CDAToken, config.SpaceID, config.Environment)
+	client.skipAssets = config.SkipAssets
 
 	// Create logger
 	logger := NewLogger(config.Verbose)

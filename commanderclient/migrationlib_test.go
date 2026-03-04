@@ -230,7 +230,7 @@ func TestEntityCollection(t *testing.T) {
 
 func TestMigrationClient(t *testing.T) {
 	// Test client creation
-	client := newMigrationClient("test-key", "test-space", "master")
+	client := newMigrationClient("test-key", "", "test-space", "master")
 
 	if client.GetSpaceID() != "test-space" {
 		t.Errorf("Expected space ID 'test-space', got '%s'", client.GetSpaceID())
@@ -318,7 +318,7 @@ func TestFilters(t *testing.T) {
 }
 
 func TestGetParents(t *testing.T) {
-	client := newMigrationClient("test-key", "test-space", "master")
+	client := newMigrationClient("test-key", "", "test-space", "master")
 
 	// Target entry — the one we'll look for parents of
 	target := &EntryEntity{
@@ -563,4 +563,238 @@ func TestPublishingStatus(t *testing.T) {
 	if changedEntry.IsPublished() {
 		t.Error("Expected changed entry to not be published")
 	}
+}
+
+func TestCDAView(t *testing.T) {
+	t.Run("entry with CDA view", func(t *testing.T) {
+		cdaEntry := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:               "entry-1",
+					Version:          2,
+					PublishedVersion: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+				Fields: map[string]any{
+					"title": map[string]any{
+						"en-US": "Published Title",
+					},
+				},
+			},
+		}
+
+		cmaEntry := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:               "entry-1",
+					Version:          3,
+					PublishedVersion: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+				Fields: map[string]any{
+					"title": map[string]any{
+						"en-US": "Draft Title (changed)",
+					},
+				},
+			},
+			cdaView: cdaEntry,
+		}
+
+		if !cmaEntry.HasCDAView() {
+			t.Error("Expected HasCDAView() to be true")
+		}
+
+		view := cmaEntry.CDAView()
+		if view == nil {
+			t.Fatal("Expected CDAView() to return non-nil entity")
+		}
+
+		// Compare field values between CMA and CDA views
+		cmaTitle := cmaEntry.GetFieldValueAsString("title", "en-US")
+		cdaTitle := view.GetFieldValueAsString("title", "en-US")
+		if cmaTitle != "Draft Title (changed)" {
+			t.Errorf("Expected CMA title 'Draft Title (changed)', got '%s'", cmaTitle)
+		}
+		if cdaTitle != "Published Title" {
+			t.Errorf("Expected CDA title 'Published Title', got '%s'", cdaTitle)
+		}
+	})
+
+	t.Run("entry without CDA view (draft)", func(t *testing.T) {
+		draftEntry := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:               "draft-1",
+					Version:          1,
+					PublishedVersion: 0,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+			},
+		}
+
+		if draftEntry.HasCDAView() {
+			t.Error("Expected HasCDAView() to be false for draft entry")
+		}
+		if draftEntry.CDAView() != nil {
+			t.Error("Expected CDAView() to be nil for draft entry")
+		}
+	})
+
+	t.Run("CDA view entity has no CDA view itself", func(t *testing.T) {
+		cdaEntry := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:               "entry-1",
+					Version:          2,
+					PublishedVersion: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+			},
+		}
+
+		cmaEntry := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:               "entry-1",
+					Version:          3,
+					PublishedVersion: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+			},
+			cdaView: cdaEntry,
+		}
+
+		// The CDA view itself should NOT have a CDA view (no recursion)
+		view := cmaEntry.CDAView()
+		if view.HasCDAView() {
+			t.Error("Expected CDA view entity's HasCDAView() to be false")
+		}
+		if view.CDAView() != nil {
+			t.Error("Expected CDA view entity's CDAView() to be nil")
+		}
+	})
+
+	t.Run("asset CDA view", func(t *testing.T) {
+		cdaAsset := &AssetEntity{
+			Asset: &contentful.Asset{
+				Sys: &contentful.Sys{
+					ID:               "asset-1",
+					Version:          2,
+					PublishedVersion: 1,
+				},
+				Fields: &contentful.FileFields{
+					Title: map[string]string{
+						"en-US": "Published Asset",
+					},
+				},
+			},
+		}
+
+		cmaAsset := &AssetEntity{
+			Asset: &contentful.Asset{
+				Sys: &contentful.Sys{
+					ID:               "asset-1",
+					Version:          3,
+					PublishedVersion: 1,
+				},
+				Fields: &contentful.FileFields{
+					Title: map[string]string{
+						"en-US": "Updated Asset",
+					},
+				},
+			},
+			cdaView: cdaAsset,
+		}
+
+		if !cmaAsset.HasCDAView() {
+			t.Error("Expected asset HasCDAView() to be true")
+		}
+
+		view := cmaAsset.CDAView()
+		if view == nil {
+			t.Fatal("Expected asset CDAView() to return non-nil entity")
+		}
+
+		cdaTitle := view.GetTitle("en-US")
+		cmaTitle := cmaAsset.GetTitle("en-US")
+		if cmaTitle != "Updated Asset" {
+			t.Errorf("Expected CMA asset title 'Updated Asset', got '%s'", cmaTitle)
+		}
+		if cdaTitle != "Published Asset" {
+			t.Errorf("Expected CDA asset title 'Published Asset', got '%s'", cdaTitle)
+		}
+
+		// Asset without CDA view
+		if cdaAsset.HasCDAView() {
+			t.Error("Expected CDA asset view's HasCDAView() to be false")
+		}
+	})
+
+	t.Run("FilterHasCDAView and FilterNoCDAView", func(t *testing.T) {
+		withCDA := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:               "with-cda",
+					Version:          2,
+					PublishedVersion: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+			},
+			cdaView: &EntryEntity{
+				Entry: &contentful.Entry{
+					Sys: &contentful.Sys{
+						ID:               "with-cda",
+						Version:          2,
+						PublishedVersion: 1,
+						ContentType: &contentful.ContentType{
+							Sys: &contentful.Sys{ID: "article"},
+						},
+					},
+				},
+			},
+		}
+
+		withoutCDA := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:               "without-cda",
+					Version:          1,
+					PublishedVersion: 0,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+			},
+		}
+
+		collection := NewEntityCollection([]Entity{withCDA, withoutCDA})
+
+		hasCDA := collection.Filter(FilterHasCDAView())
+		if hasCDA.Count() != 1 {
+			t.Errorf("Expected 1 entity with CDA view, got %d", hasCDA.Count())
+		}
+		if hasCDA.Get()[0].GetID() != "with-cda" {
+			t.Errorf("Expected entity 'with-cda', got '%s'", hasCDA.Get()[0].GetID())
+		}
+
+		noCDA := collection.Filter(FilterNoCDAView())
+		if noCDA.Count() != 1 {
+			t.Errorf("Expected 1 entity without CDA view, got %d", noCDA.Count())
+		}
+		if noCDA.Get()[0].GetID() != "without-cda" {
+			t.Errorf("Expected entity 'without-cda', got '%s'", noCDA.Get()[0].GetID())
+		}
+	})
 }

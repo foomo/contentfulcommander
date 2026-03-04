@@ -14,16 +14,18 @@ A Go library for Contentful migrations that provides a high-level interface for 
 
 - **Unified Entity Interface**: Work with both Contentful entries and assets through a common interface
 - **Space Model Caching**: Load and cache entire space models for efficient operations
+- **Dual CMA/CDA Loading**: Load management (CMA) and delivery (CDA) views side-by-side for diff-style comparisons
 - **Locale-Aware Operations**: Native support for Contentful's localization system with locale-specific field access
 - **Type-Safe Field Access**: Specialized methods for different field types (string, float64, bool, references)
 - **Reference Resolution**: Direct access to referenced entities with automatic broken reference handling
 - **Asset-Specific Methods**: Dedicated methods for asset title, description, and file access
-- **Flexible Filtering**: Filter entities by content type, publication status, timestamps, and custom criteria
+- **Flexible Filtering**: Filter entities by content type, publication status, CDA availability, timestamps, and custom criteria
 - **Collection Operations**: Chain operations like filtering, mapping, grouping, and reducing
 - **Migration Execution**: Execute batch operations with dry-run support, concurrent execution, and comprehensive error handling
 - **DeepL Translation**: Built-in DeepL API integration for automated field translation with cost tracking
 - **Concurrent Loading**: Parallel loading of entries and assets for faster space initialization
-- **Configuration Management**: Load configuration from environment variables or `.contentfulrc.json` files
+- **Selective Loading**: Skip asset loading with `SkipAssets` to save time and bandwidth when only entries are needed
+- **Configuration Management**: Load configuration from environment variables
 - **Portable Design**: Only depends on `github.com/foomo/contentful` and standard library
 
 ## Quick Start
@@ -102,6 +104,10 @@ type Entity interface {
     GetDescription(locale Locale) string
     GetFile(locale Locale) *contentful.File
 
+    // CDA (Content Delivery API) view
+    HasCDAView() bool       // true if a published CDA snapshot is attached
+    CDAView() Entity        // the published view, or nil
+
     // Utility methods
     SetFieldValue(fieldName string, locale Locale, value any)
     GetSys() *contentful.Sys
@@ -122,6 +128,38 @@ The library provides accurate publishing status detection based on Contentful's 
 entity := client.GetEntity("some-id")
 status := entity.GetPublishingStatus() // "draft", "published", or "changed"
 isPublished := entity.IsPublished()     // true only if status == "published"
+```
+
+### CDA Views
+
+When a CDA (Content Delivery API) key is provided, the client loads published snapshots alongside the CMA (management) data and attaches them to each entity. This lets you compare draft vs. published content without extra API calls.
+
+```go
+// Enable CDA views via config
+config := commanderclient.LoadConfigFromEnv() // reads CONTENTFUL_CDAKEY
+// or set manually: config.CDAToken = "your-cda-key"
+
+client, logger, err := commanderclient.Init(config)
+
+// Check CDA availability on the client
+if client.HasCDA() {
+    log.Println("CDA views are available")
+}
+
+// Access the published view of any entity
+entity, _ := client.GetEntity("some-id")
+if entity.HasCDAView() {
+    published := entity.CDAView()
+    draftTitle := entity.GetFieldValueAsString("title", locale)
+    liveTitle := published.GetFieldValueAsString("title", locale)
+    if draftTitle != liveTitle {
+        log.Printf("Title changed: %q -> %q", liveTitle, draftTitle)
+    }
+}
+
+// Filter entities by CDA availability
+withCDA := client.FilterEntities(commanderclient.FilterHasCDAView())   // has published version
+noCDA := client.FilterEntities(commanderclient.FilterNoCDAView())      // draft-only
 ```
 
 The `MigrationClient` provides the main interface for working with Contentful spaces:
@@ -653,6 +691,10 @@ commanderclient.FilterByType("Entry")  // or "Asset"
 commanderclient.FilterPublished()
 commanderclient.FilterDrafts()
 
+// CDA view filters (requires CDA key)
+commanderclient.FilterHasCDAView()    // has a published CDA snapshot
+commanderclient.FilterNoCDAView()     // draft-only or no CDA key
+
 // Timestamp filters
 commanderclient.FilterByCreatedAfter(time)
 commanderclient.FilterByUpdatedAfter(time)
@@ -677,9 +719,11 @@ config := commanderclient.LoadConfigFromEnv()
 // Or create custom config
 config := &commanderclient.Config{
     CMAToken:    "your-cma-key",
+    CDAToken:    "your-cda-key",  // optional — enables CDA views
     SpaceID:     "your-space-id",
     Environment: "master",
     Verbose:     true,
+    SkipAssets:  false, // set true to skip loading assets entirely
 }
 
 // Initialize ready-to-use client with logger and loaded space model
@@ -691,10 +735,14 @@ if err != nil {
 
 Environment variables:
 - `CONTENTFUL_CMAKEY`: CMA API key (mandatory)
+- `CONTENTFUL_CDAKEY`: CDA API key (optional — enables CDA views on entities)
 - `CONTENTFUL_SPACE_ID`: Space ID (mandatory)
 - `CONTENTFUL_ENVIRONMENT`: Environment (default: "dev")
 - `CONTENTFUL_VERBOSE`: Enable verbose logging
 - `DEEPL_API_KEY`: DeepL API key (required for translation features)
+
+Code-only config options (not loaded from env):
+- `Config.SkipAssets`: Skip loading assets to save time and bandwidth when only entries are needed
 
 ## Example Usage
 
@@ -785,7 +833,8 @@ log.Printf("Processed %d entities with %d errors",
 ## Performance Considerations
 
 - The library loads entire space models into memory for efficient operations
-- **Concurrent loading**: Entries and assets are loaded in parallel for faster initialization
+- **Concurrent loading**: Entries and assets are loaded in parallel for faster initialization. When a CDA key is provided, CDA views are loaded in a second concurrent phase after CMA data
+- **Skip assets**: Set `Config.SkipAssets = true` to skip asset loading entirely — useful for entry-only migrations where assets are irrelevant
 - **Concurrent batch execution**: `ExecuteBatch` runs operations concurrently (default: 3 parallel API calls, configurable via `client.SetConcurrency(n)`)
 - Use appropriate batch sizes for large operations
 - Consider using dry-run mode for testing

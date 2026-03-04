@@ -266,6 +266,14 @@ func (ee *EntryEntity) IsAsset() bool {
 	return false
 }
 
+func (ee *EntryEntity) HasCDAView() bool {
+	return ee.cdaView != nil
+}
+
+func (ee *EntryEntity) CDAView() Entity {
+	return ee.cdaView
+}
+
 // GetParents returns all entities that reference this entry.
 // If contentTypes is non-nil, only parents matching those content types are returned.
 func (ee *EntryEntity) GetParents(contentTypes []string) *EntityCollection {
@@ -502,6 +510,14 @@ func (ae *AssetEntity) IsEntry() bool {
 
 func (ae *AssetEntity) IsAsset() bool {
 	return true
+}
+
+func (ae *AssetEntity) HasCDAView() bool {
+	return ae.cdaView != nil
+}
+
+func (ae *AssetEntity) CDAView() Entity {
+	return ae.cdaView
 }
 
 // GetParents returns all entities that reference this asset.
