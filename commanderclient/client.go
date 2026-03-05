@@ -16,6 +16,7 @@ import (
 // MigrationClient provides a high-level interface for Contentful migrations
 type MigrationClient struct {
 	cma         *contentful.Contentful
+	cda         *contentful.Contentful
 	spaceID     string
 	environment string
 	spaceModel  *SpaceModel
@@ -23,10 +24,11 @@ type MigrationClient struct {
 	cacheMu     sync.Mutex
 	stats       *MigrationStats
 	concurrency int
+	skipAssets  bool
 }
 
 // newMigrationClient creates a new migration client
-func newMigrationClient(cmaKey, spaceID, environment string) *MigrationClient {
+func newMigrationClient(cmaKey, cdaKey, spaceID, environment string) *MigrationClient {
 	if environment == "" {
 		environment = "dev"
 	}
@@ -34,7 +36,7 @@ func newMigrationClient(cmaKey, spaceID, environment string) *MigrationClient {
 	cma := contentful.NewCMA(cmaKey)
 	cma.Environment = environment
 
-	return &MigrationClient{
+	mc := &MigrationClient{
 		cma:         cma,
 		spaceID:     spaceID,
 		environment: environment,
@@ -44,6 +46,14 @@ func newMigrationClient(cmaKey, spaceID, environment string) *MigrationClient {
 		},
 		concurrency: 3,
 	}
+
+	if cdaKey != "" {
+		cda := contentful.NewCDA(cdaKey)
+		cda.Environment = environment
+		mc.cda = cda
+	}
+
+	return mc
 }
 
 // GetSpaceID returns the space ID
@@ -59,6 +69,16 @@ func (mc *MigrationClient) GetEnvironment() string {
 // GetCMA returns the underlying CMA client
 func (mc *MigrationClient) GetCMA() *contentful.Contentful {
 	return mc.cma
+}
+
+// HasCDA returns true if a CDA client is configured
+func (mc *MigrationClient) HasCDA() bool {
+	return mc.cda != nil
+}
+
+// GetCDA returns the underlying CDA client (nil when no CDA key is configured)
+func (mc *MigrationClient) GetCDA() *contentful.Contentful {
+	return mc.cda
 }
 
 // GetStats returns migration statistics
@@ -96,14 +116,32 @@ func (mc *MigrationClient) LoadSpaceModel(ctx context.Context, logger *Logger) e
 		}
 		return nil
 	})
-	g.Go(func() error {
-		if err := mc.loadAssets(gCtx, spaceModel, logger); err != nil {
-			return fmt.Errorf("failed to load assets: %w", err)
-		}
-		return nil
-	})
+	if !mc.skipAssets {
+		g.Go(func() error {
+			if err := mc.loadAssets(gCtx, spaceModel, logger); err != nil {
+				return fmt.Errorf("failed to load assets: %w", err)
+			}
+			return nil
+		})
+	}
 	if err := g.Wait(); err != nil {
 		return err
+	}
+
+	// Load CDA views (must run after CMA phase — needs CMA entities to attach to)
+	if mc.cda != nil {
+		gCDA, gCDACtx := errgroup.WithContext(ctx)
+		gCDA.Go(func() error {
+			return mc.loadCDAEntries(gCDACtx, spaceModel, 512, logger)
+		})
+		if !mc.skipAssets {
+			gCDA.Go(func() error {
+				return mc.loadCDAAssets(gCDACtx, spaceModel, logger)
+			})
+		}
+		if err := gCDA.Wait(); err != nil {
+			return err
+		}
 	}
 
 	mc.spaceModel = spaceModel
@@ -199,7 +237,13 @@ func (mc *MigrationClient) RefreshEntity(ctx context.Context, id string) error {
 	// Try to get as entry first
 	entry, err := mc.cma.Entries.Get(ctx, mc.spaceID, id)
 	if err == nil {
-		entity := &EntryEntity{Entry: entry}
+		entity := &EntryEntity{Entry: entry, Client: mc}
+		// Fetch CDA view if available (failure is silent — entity may be draft)
+		if mc.cda != nil {
+			if cdaEntry, cdaErr := mc.cda.Entries.Get(ctx, mc.spaceID, id); cdaErr == nil {
+				entity.cdaView = &EntryEntity{Entry: cdaEntry, Client: mc}
+			}
+		}
 		mc.cacheMu.Lock()
 		mc.cache[id] = entity
 		if mc.spaceModel != nil {
@@ -212,7 +256,13 @@ func (mc *MigrationClient) RefreshEntity(ctx context.Context, id string) error {
 	// Try to get as asset
 	asset, err := mc.cma.Assets.Get(ctx, mc.spaceID, id)
 	if err == nil {
-		entity := &AssetEntity{Asset: asset}
+		entity := &AssetEntity{Asset: asset, Client: mc}
+		// Fetch CDA view if available
+		if mc.cda != nil {
+			if cdaAsset, cdaErr := mc.cda.Assets.Get(ctx, mc.spaceID, id); cdaErr == nil {
+				entity.cdaView = &AssetEntity{Asset: cdaAsset, Client: mc}
+			}
+		}
 		mc.cacheMu.Lock()
 		mc.cache[id] = entity
 		if mc.spaceModel != nil {

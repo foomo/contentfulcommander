@@ -1,6 +1,7 @@
 package commanderclient
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/foomo/contentful"
@@ -230,7 +231,7 @@ func TestEntityCollection(t *testing.T) {
 
 func TestMigrationClient(t *testing.T) {
 	// Test client creation
-	client := newMigrationClient("test-key", "test-space", "master")
+	client := newMigrationClient("test-key", "", "test-space", "master")
 
 	if client.GetSpaceID() != "test-space" {
 		t.Errorf("Expected space ID 'test-space', got '%s'", client.GetSpaceID())
@@ -318,7 +319,7 @@ func TestFilters(t *testing.T) {
 }
 
 func TestGetParents(t *testing.T) {
-	client := newMigrationClient("test-key", "test-space", "master")
+	client := newMigrationClient("test-key", "", "test-space", "master")
 
 	// Target entry — the one we'll look for parents of
 	target := &EntryEntity{
@@ -506,6 +507,304 @@ func TestGetParents(t *testing.T) {
 	})
 }
 
+func TestGetReferrerPath(t *testing.T) {
+	// Helper to build an entry entity with fields referencing other IDs.
+	makeEntry := func(client *MigrationClient, id, ct string, fields map[string]any) *EntryEntity {
+		return &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:      id,
+					Version: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: ct},
+					},
+				},
+				Fields: fields,
+			},
+			Client: client,
+		}
+	}
+
+	linkRef := func(id string) map[string]any {
+		return map[string]any{"sys": map[string]any{"id": id, "type": "Link"}}
+	}
+
+	t.Run("linear path root -> mid -> leaf", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		root := makeEntry(client, "root", "page", map[string]any{
+			"children": map[string]any{"en-US": linkRef("mid")},
+		})
+		mid := makeEntry(client, "mid", "section", map[string]any{
+			"children": map[string]any{"en-US": linkRef("leaf")},
+		})
+		leaf := makeEntry(client, "leaf", "article", map[string]any{})
+
+		client.cache["root"] = root
+		client.cache["mid"] = mid
+		client.cache["leaf"] = leaf
+
+		path, err := leaf.GetReferrerPath([]string{"children"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 3 {
+			t.Fatalf("expected path length 3, got %d", len(path))
+		}
+		if path[0].GetID() != "root" || path[1].GetID() != "mid" || path[2].GetID() != "leaf" {
+			t.Errorf("expected [root, mid, leaf], got [%s, %s, %s]", path[0].GetID(), path[1].GetID(), path[2].GetID())
+		}
+	})
+
+	t.Run("no referrer returns self", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+		alone := makeEntry(client, "alone", "article", map[string]any{})
+		client.cache["alone"] = alone
+
+		path, err := alone.GetReferrerPath([]string{"children"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 1 || path[0].GetID() != "alone" {
+			t.Errorf("expected [alone], got %v", path)
+		}
+	})
+
+	t.Run("field name filtering excludes non-matching referrers", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		// parent references child via "hero" field, but we only search "children"
+		parent := makeEntry(client, "parent", "page", map[string]any{
+			"hero": map[string]any{"en-US": linkRef("child")},
+		})
+		child := makeEntry(client, "child", "article", map[string]any{})
+
+		client.cache["parent"] = parent
+		client.cache["child"] = child
+
+		path, err := child.GetReferrerPath([]string{"children"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 1 {
+			t.Errorf("expected [child] (field filtered), got length %d", len(path))
+		}
+	})
+
+	t.Run("StopAtEntityID truncates path", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		root := makeEntry(client, "root", "page", map[string]any{
+			"children": map[string]any{"en-US": linkRef("mid")},
+		})
+		mid := makeEntry(client, "mid", "section", map[string]any{
+			"children": map[string]any{"en-US": linkRef("leaf")},
+		})
+		leaf := makeEntry(client, "leaf", "article", map[string]any{})
+
+		client.cache["root"] = root
+		client.cache["mid"] = mid
+		client.cache["leaf"] = leaf
+
+		path, err := leaf.GetReferrerPath([]string{"children"}, StopAtEntityID("mid"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 2 {
+			t.Fatalf("expected path length 2, got %d", len(path))
+		}
+		if path[0].GetID() != "mid" || path[1].GetID() != "leaf" {
+			t.Errorf("expected [mid, leaf], got [%s, %s]", path[0].GetID(), path[1].GetID())
+		}
+	})
+
+	t.Run("StopAtContentType truncates path", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		root := makeEntry(client, "root", "page", map[string]any{
+			"children": map[string]any{"en-US": linkRef("mid")},
+		})
+		mid := makeEntry(client, "mid", "section", map[string]any{
+			"children": map[string]any{"en-US": linkRef("leaf")},
+		})
+		leaf := makeEntry(client, "leaf", "article", map[string]any{})
+
+		client.cache["root"] = root
+		client.cache["mid"] = mid
+		client.cache["leaf"] = leaf
+
+		path, err := leaf.GetReferrerPath([]string{"children"}, StopAtContentType("section"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 2 {
+			t.Fatalf("expected path length 2, got %d", len(path))
+		}
+		if path[0].GetID() != "mid" || path[1].GetID() != "leaf" {
+			t.Errorf("expected [mid, leaf], got [%s, %s]", path[0].GetID(), path[1].GetID())
+		}
+	})
+
+	t.Run("multiple referrers returns ErrAmbiguousPath", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		p1 := makeEntry(client, "p1", "page", map[string]any{
+			"children": map[string]any{"en-US": linkRef("child")},
+		})
+		p2 := makeEntry(client, "p2", "page", map[string]any{
+			"children": map[string]any{"en-US": linkRef("child")},
+		})
+		child := makeEntry(client, "child", "article", map[string]any{})
+
+		client.cache["p1"] = p1
+		client.cache["p2"] = p2
+		client.cache["child"] = child
+
+		_, err := child.GetReferrerPath([]string{"children"})
+		if !errors.Is(err, ErrAmbiguousPath) {
+			t.Errorf("expected ErrAmbiguousPath, got %v", err)
+		}
+	})
+
+	t.Run("cycle returns ErrCircularReference", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		a := makeEntry(client, "a", "page", map[string]any{
+			"children": map[string]any{"en-US": linkRef("b")},
+		})
+		b := makeEntry(client, "b", "page", map[string]any{
+			"children": map[string]any{"en-US": linkRef("a")},
+		})
+
+		client.cache["a"] = a
+		client.cache["b"] = b
+
+		_, err := a.GetReferrerPath([]string{"children"})
+		if !errors.Is(err, ErrCircularReference) {
+			t.Errorf("expected ErrCircularReference, got %v", err)
+		}
+	})
+
+	t.Run("nil client returns self", func(t *testing.T) {
+		orphan := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:      "orphan",
+					Version: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+				Fields: map[string]any{},
+			},
+		}
+
+		path, err := orphan.GetReferrerPath([]string{"children"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 1 || path[0].GetID() != "orphan" {
+			t.Errorf("expected [orphan], got %v", path)
+		}
+	})
+
+	t.Run("empty fieldNames returns self", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+		entry := makeEntry(client, "e1", "article", map[string]any{})
+		client.cache["e1"] = entry
+
+		path, err := entry.GetReferrerPath([]string{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 1 || path[0].GetID() != "e1" {
+			t.Errorf("expected [e1], got %v", path)
+		}
+	})
+
+	t.Run("asset as starting entity", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		parent := makeEntry(client, "parent", "page", map[string]any{
+			"image": map[string]any{"en-US": linkRef("asset-1")},
+		})
+		asset := &AssetEntity{
+			Asset: &contentful.Asset{
+				Sys: &contentful.Sys{
+					ID:      "asset-1",
+					Version: 1,
+				},
+				Fields: &contentful.FileFields{
+					Title: map[string]string{"en-US": "My Asset"},
+				},
+			},
+			Client: client,
+		}
+
+		client.cache["parent"] = parent
+		client.cache["asset-1"] = asset
+
+		path, err := asset.GetReferrerPath([]string{"image"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 2 {
+			t.Fatalf("expected path length 2, got %d", len(path))
+		}
+		if path[0].GetID() != "parent" || path[1].GetID() != "asset-1" {
+			t.Errorf("expected [parent, asset-1], got [%s, %s]", path[0].GetID(), path[1].GetID())
+		}
+	})
+
+	t.Run("reference in non-default locale still found", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		parent := makeEntry(client, "parent", "page", map[string]any{
+			"children": map[string]any{
+				"de-DE": linkRef("child"),
+			},
+		})
+		child := makeEntry(client, "child", "article", map[string]any{})
+
+		client.cache["parent"] = parent
+		client.cache["child"] = child
+
+		path, err := child.GetReferrerPath([]string{"children"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 2 {
+			t.Fatalf("expected path length 2, got %d", len(path))
+		}
+		if path[0].GetID() != "parent" {
+			t.Errorf("expected parent at index 0, got %s", path[0].GetID())
+		}
+	})
+
+	t.Run("stop condition entity not in chain returns full path", func(t *testing.T) {
+		client := newMigrationClient("k", "", "s", "master")
+
+		root := makeEntry(client, "root", "page", map[string]any{
+			"children": map[string]any{"en-US": linkRef("leaf")},
+		})
+		leaf := makeEntry(client, "leaf", "article", map[string]any{})
+
+		client.cache["root"] = root
+		client.cache["leaf"] = leaf
+
+		path, err := leaf.GetReferrerPath([]string{"children"}, StopAtEntityID("nonexistent"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(path) != 2 {
+			t.Fatalf("expected path length 2, got %d", len(path))
+		}
+		if path[0].GetID() != "root" || path[1].GetID() != "leaf" {
+			t.Errorf("expected [root, leaf], got [%s, %s]", path[0].GetID(), path[1].GetID())
+		}
+	})
+}
+
 func TestPublishingStatus(t *testing.T) {
 	// Test draft status (PublishedVersion = 0)
 	draftEntry := &EntryEntity{
@@ -563,4 +862,354 @@ func TestPublishingStatus(t *testing.T) {
 	if changedEntry.IsPublished() {
 		t.Error("Expected changed entry to not be published")
 	}
+}
+
+func TestCDAView(t *testing.T) {
+	t.Run("entry with CDA view", func(t *testing.T) {
+		cdaEntry := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:               "entry-1",
+					Version:          2,
+					PublishedVersion: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+				Fields: map[string]any{
+					"title": map[string]any{
+						"en-US": "Published Title",
+					},
+				},
+			},
+		}
+
+		cmaEntry := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:               "entry-1",
+					Version:          3,
+					PublishedVersion: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+				Fields: map[string]any{
+					"title": map[string]any{
+						"en-US": "Draft Title (changed)",
+					},
+				},
+			},
+			cdaView: cdaEntry,
+		}
+
+		if !cmaEntry.HasCDAView() {
+			t.Error("Expected HasCDAView() to be true")
+		}
+
+		view := cmaEntry.CDAView()
+		if view == nil {
+			t.Fatal("Expected CDAView() to return non-nil entity")
+		}
+
+		// Compare field values between CMA and CDA views
+		cmaTitle := cmaEntry.GetFieldValueAsString("title", "en-US")
+		cdaTitle := view.GetFieldValueAsString("title", "en-US")
+		if cmaTitle != "Draft Title (changed)" {
+			t.Errorf("Expected CMA title 'Draft Title (changed)', got '%s'", cmaTitle)
+		}
+		if cdaTitle != "Published Title" {
+			t.Errorf("Expected CDA title 'Published Title', got '%s'", cdaTitle)
+		}
+	})
+
+	t.Run("entry without CDA view (draft)", func(t *testing.T) {
+		draftEntry := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:               "draft-1",
+					Version:          1,
+					PublishedVersion: 0,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+			},
+		}
+
+		if draftEntry.HasCDAView() {
+			t.Error("Expected HasCDAView() to be false for draft entry")
+		}
+		if draftEntry.CDAView() != nil {
+			t.Error("Expected CDAView() to be nil for draft entry")
+		}
+	})
+
+	t.Run("CDA view entity has no CDA view itself", func(t *testing.T) {
+		cdaEntry := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:               "entry-1",
+					Version:          2,
+					PublishedVersion: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+			},
+		}
+
+		cmaEntry := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:               "entry-1",
+					Version:          3,
+					PublishedVersion: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+			},
+			cdaView: cdaEntry,
+		}
+
+		// The CDA view itself should NOT have a CDA view (no recursion)
+		view := cmaEntry.CDAView()
+		if view.HasCDAView() {
+			t.Error("Expected CDA view entity's HasCDAView() to be false")
+		}
+		if view.CDAView() != nil {
+			t.Error("Expected CDA view entity's CDAView() to be nil")
+		}
+	})
+
+	t.Run("asset CDA view", func(t *testing.T) {
+		cdaAsset := &AssetEntity{
+			Asset: &contentful.Asset{
+				Sys: &contentful.Sys{
+					ID:               "asset-1",
+					Version:          2,
+					PublishedVersion: 1,
+				},
+				Fields: &contentful.FileFields{
+					Title: map[string]string{
+						"en-US": "Published Asset",
+					},
+				},
+			},
+		}
+
+		cmaAsset := &AssetEntity{
+			Asset: &contentful.Asset{
+				Sys: &contentful.Sys{
+					ID:               "asset-1",
+					Version:          3,
+					PublishedVersion: 1,
+				},
+				Fields: &contentful.FileFields{
+					Title: map[string]string{
+						"en-US": "Updated Asset",
+					},
+				},
+			},
+			cdaView: cdaAsset,
+		}
+
+		if !cmaAsset.HasCDAView() {
+			t.Error("Expected asset HasCDAView() to be true")
+		}
+
+		view := cmaAsset.CDAView()
+		if view == nil {
+			t.Fatal("Expected asset CDAView() to return non-nil entity")
+		}
+
+		cdaTitle := view.GetTitle("en-US")
+		cmaTitle := cmaAsset.GetTitle("en-US")
+		if cmaTitle != "Updated Asset" {
+			t.Errorf("Expected CMA asset title 'Updated Asset', got '%s'", cmaTitle)
+		}
+		if cdaTitle != "Published Asset" {
+			t.Errorf("Expected CDA asset title 'Published Asset', got '%s'", cdaTitle)
+		}
+
+		// Asset without CDA view
+		if cdaAsset.HasCDAView() {
+			t.Error("Expected CDA asset view's HasCDAView() to be false")
+		}
+	})
+
+	t.Run("FilterHasCDAView and FilterNoCDAView", func(t *testing.T) {
+		withCDA := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:               "with-cda",
+					Version:          2,
+					PublishedVersion: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+			},
+			cdaView: &EntryEntity{
+				Entry: &contentful.Entry{
+					Sys: &contentful.Sys{
+						ID:               "with-cda",
+						Version:          2,
+						PublishedVersion: 1,
+						ContentType: &contentful.ContentType{
+							Sys: &contentful.Sys{ID: "article"},
+						},
+					},
+				},
+			},
+		}
+
+		withoutCDA := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:               "without-cda",
+					Version:          1,
+					PublishedVersion: 0,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+			},
+		}
+
+		collection := NewEntityCollection([]Entity{withCDA, withoutCDA})
+
+		hasCDA := collection.Filter(FilterHasCDAView())
+		if hasCDA.Count() != 1 {
+			t.Errorf("Expected 1 entity with CDA view, got %d", hasCDA.Count())
+		}
+		if hasCDA.Get()[0].GetID() != "with-cda" {
+			t.Errorf("Expected entity 'with-cda', got '%s'", hasCDA.Get()[0].GetID())
+		}
+
+		noCDA := collection.Filter(FilterNoCDAView())
+		if noCDA.Count() != 1 {
+			t.Errorf("Expected 1 entity without CDA view, got %d", noCDA.Count())
+		}
+		if noCDA.Get()[0].GetID() != "without-cda" {
+			t.Errorf("Expected entity 'without-cda', got '%s'", noCDA.Get()[0].GetID())
+		}
+	})
+}
+
+func TestIsFieldNullOrEmpty(t *testing.T) {
+	t.Run("entry entity", func(t *testing.T) {
+		entry := &EntryEntity{
+			Entry: &contentful.Entry{
+				Sys: &contentful.Sys{
+					ID:      "test-entry",
+					Version: 1,
+					ContentType: &contentful.ContentType{
+						Sys: &contentful.Sys{ID: "article"},
+					},
+				},
+				Fields: map[string]any{
+					"title": map[string]any{
+						"en-US": "Hello",
+						"de-DE": "",
+					},
+					"body": map[string]any{
+						"en-US": map[string]any{},
+					},
+					"tags": map[string]any{
+						"en-US": []any{},
+						"de-DE": []any{"tag1"},
+					},
+				},
+			},
+		}
+
+		// nil field (field doesn't exist)
+		if !entry.IsFieldNullOrEmpty("nonexistent", "en-US") {
+			t.Error("Expected nonexistent field to be null or empty")
+		}
+
+		// non-empty string
+		if entry.IsFieldNullOrEmpty("title", "en-US") {
+			t.Error("Expected non-empty title to not be null or empty")
+		}
+
+		// empty string
+		if !entry.IsFieldNullOrEmpty("title", "de-DE") {
+			t.Error("Expected empty string title to be null or empty")
+		}
+
+		// nil locale (locale doesn't exist)
+		if !entry.IsFieldNullOrEmpty("title", "fr-FR") {
+			t.Error("Expected missing locale to be null or empty")
+		}
+
+		// empty map
+		if !entry.IsFieldNullOrEmpty("body", "en-US") {
+			t.Error("Expected empty map to be null or empty")
+		}
+
+		// empty slice
+		if !entry.IsFieldNullOrEmpty("tags", "en-US") {
+			t.Error("Expected empty slice to be null or empty")
+		}
+
+		// non-empty slice
+		if entry.IsFieldNullOrEmpty("tags", "de-DE") {
+			t.Error("Expected non-empty slice to not be null or empty")
+		}
+	})
+
+	t.Run("asset entity", func(t *testing.T) {
+		asset := &AssetEntity{
+			Asset: &contentful.Asset{
+				Sys: &contentful.Sys{
+					ID:      "test-asset",
+					Version: 1,
+				},
+				Fields: &contentful.FileFields{
+					Title: map[string]string{
+						"en-US": "My Asset",
+					},
+					Description: map[string]string{
+						"en-US": "",
+					},
+					File: map[string]*contentful.File{
+						"en-US": {URL: "https://example.com/file.png"},
+					},
+				},
+			},
+		}
+
+		// non-empty title
+		if asset.IsFieldNullOrEmpty("title", "en-US") {
+			t.Error("Expected non-empty title to not be null or empty")
+		}
+
+		// missing locale for title
+		if !asset.IsFieldNullOrEmpty("title", "de-DE") {
+			t.Error("Expected missing locale title to be null or empty")
+		}
+
+		// empty description
+		if !asset.IsFieldNullOrEmpty("description", "en-US") {
+			t.Error("Expected empty description to be null or empty")
+		}
+
+		// non-nil file
+		if asset.IsFieldNullOrEmpty("file", "en-US") {
+			t.Error("Expected non-nil file to not be null or empty")
+		}
+
+		// missing locale for file
+		if !asset.IsFieldNullOrEmpty("file", "de-DE") {
+			t.Error("Expected missing locale file to be null or empty")
+		}
+
+		// unknown field
+		if !asset.IsFieldNullOrEmpty("unknown", "en-US") {
+			t.Error("Expected unknown field to be null or empty")
+		}
+	})
 }

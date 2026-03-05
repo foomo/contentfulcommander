@@ -107,6 +107,9 @@ type Entity interface {
 	// GetFile returns the file information of the entity for the specified locale
 	GetFile(locale Locale) *contentful.File
 
+	// IsFieldNullOrEmpty returns true if the field value for the given locale is nil, an empty string, an empty map, or an empty slice
+	IsFieldNullOrEmpty(fieldName string, locale Locale) bool
+
 	// SetFieldValue sets the value of a field for a specific locale
 	SetFieldValue(fieldName string, locale Locale, value any)
 
@@ -122,18 +125,34 @@ type Entity interface {
 	// GetParents returns all entities that reference this entity.
 	// If contentTypes is non-nil, only parents matching those content types are returned.
 	GetParents(contentTypes []string) *EntityCollection
+
+	// GetReferrerPath walks up the referrer chain through the specified fields
+	// and returns the ordered path from root to self.
+	// Returns ErrAmbiguousPath if multiple referrers are found at any step.
+	// Returns ErrCircularReference if a cycle is detected.
+	GetReferrerPath(fieldNames []string, opts ...PathOption) ([]Entity, error)
+
+	// HasCDAView returns true if this entity has a CDA (Content Delivery API) view attached.
+	// The CDA view represents the published/live version of the entity.
+	HasCDAView() bool
+
+	// CDAView returns the CDA view of this entity, or nil if no CDA view is available.
+	// The CDA view is itself a full Entity with all standard methods.
+	CDAView() Entity
 }
 
 // EntryEntity wraps a Contentful entry
 type EntryEntity struct {
-	Entry  *contentful.Entry
-	Client *MigrationClient
+	Entry   *contentful.Entry
+	Client  *MigrationClient
+	cdaView Entity
 }
 
 // AssetEntity wraps a Contentful asset
 type AssetEntity struct {
-	Asset  *contentful.Asset
-	Client *MigrationClient
+	Asset   *contentful.Asset
+	Client  *MigrationClient
+	cdaView Entity
 }
 
 // EntityCollection represents a collection of entities with filtering capabilities

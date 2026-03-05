@@ -51,3 +51,48 @@ func (mc *MigrationClient) loadAssets(ctx context.Context, spaceModel *SpaceMode
 	logger.Info("Loaded %d assets", mc.stats.ProcessedAssets)
 	return nil
 }
+
+// loadCDAEntries loads all published entries via CDA and attaches them as cdaView on matching CMA entities.
+func (mc *MigrationClient) loadCDAEntries(ctx context.Context, spaceModel *SpaceModel, limit uint16, logger *Logger) error {
+	if limit == 0 {
+		limit = 512
+	}
+	entriesCollection := mc.cda.Entries.List(ctx, mc.spaceID)
+	entriesCollection.Query.Locale("*").Include(0).Limit(limit)
+	entries, err := entriesCollection.GetAll()
+	if err != nil {
+		return err
+	}
+	matched := 0
+	for _, entry := range entries.Items {
+		if cmaEntity, ok := spaceModel.Entries[entry.Sys.ID]; ok {
+			if ee, ok := cmaEntity.(*EntryEntity); ok {
+				ee.cdaView = &EntryEntity{Entry: &entry, Client: mc}
+				matched++
+			}
+		}
+	}
+	logger.Info("Loaded %d CDA entries (%d matched CMA entries)", len(entries.Items), matched)
+	return nil
+}
+
+// loadCDAAssets loads all published assets via CDA and attaches them as cdaView on matching CMA assets.
+func (mc *MigrationClient) loadCDAAssets(ctx context.Context, spaceModel *SpaceModel, logger *Logger) error {
+	assetsCollection := mc.cda.Assets.List(ctx, mc.spaceID)
+	assetsCollection.Query.Locale("*").Limit(1000)
+	assets, err := assetsCollection.GetAll()
+	if err != nil {
+		return err
+	}
+	matched := 0
+	for _, asset := range assets.Items {
+		if cmaEntity, ok := spaceModel.Assets[asset.Sys.ID]; ok {
+			if ae, ok := cmaEntity.(*AssetEntity); ok {
+				ae.cdaView = &AssetEntity{Asset: &asset, Client: mc}
+				matched++
+			}
+		}
+	}
+	logger.Info("Loaded %d CDA assets (%d matched CMA assets)", len(assets.Items), matched)
+	return nil
+}

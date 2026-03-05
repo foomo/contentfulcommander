@@ -489,6 +489,20 @@ func FilterByFieldExistsWithLocale(fieldName string, locale Locale) EntityFilter
 	}
 }
 
+// FilterHasCDAView returns a filter for entities that have a CDA view attached
+func FilterHasCDAView() EntityFilter {
+	return func(entity Entity) bool {
+		return entity.HasCDAView()
+	}
+}
+
+// FilterNoCDAView returns a filter for entities without a CDA view (draft-only or no CDA key configured)
+func FilterNoCDAView() EntityFilter {
+	return func(entity Entity) bool {
+		return !entity.HasCDAView()
+	}
+}
+
 // FilterByLocaleAvailability returns a filter for entities that have content in specific locales
 func FilterByLocaleAvailability(requiredLocales []Locale) EntityFilter {
 	return func(entity Entity) bool {
