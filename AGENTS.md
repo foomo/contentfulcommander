@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents when working with code in this repository.
 
 ## Project
 
@@ -42,7 +42,7 @@ Single library package (`commanderclient/`) with a thin CLI entry point (`main.g
 
 - **`Entity` interface** (`types.go`) — unified API over `EntryEntity` and `AssetEntity`. All field access is locale-aware with fallback support. Publishing status derived from version arithmetic: `draft` (PublishedVersion==0), `published` (Version-PublishedVersion==1), `changed` (>1).
 
-- **`MigrationClient`** (`client.go`) — wraps the foomo/contentful CMA SDK. Optionally pairs a CDA client for published-view access. `LoadSpaceModel()` fetches locales, content types, entries, and assets concurrently into a `SpaceModel` cache. Initial entry loading is split by content type with 3 workers, starts at 1000-entry pages, and halves the page size only for content types that hit Contentful response-size limits. `UpdateSpaceModel()` incrementally refreshes only recently changed entities (ordered by `-sys.updatedAt`, pages of 100, stops when reaching entities older than the previous update start). When a CDA key is provided, CDA views are loaded and attached to each entity (`entity.HasCDAView()`, `entity.CDAView()`). Set `Config.SkipAssets = true` to skip asset loading entirely. Provides entity lookups and filtering.
+- **`MigrationClient`** (`client.go`) — wraps the foomo/contentful CMA SDK. Optionally pairs a CDA client for published-view access. `LoadSpaceModel()` fetches locales, content types, entries, and assets concurrently into a `SpaceModel` cache. `UpdateSpaceModel()` incrementally refreshes only recently changed entities (ordered by `-sys.updatedAt`, pages of 100, stops when reaching entities older than the previous update start). When a CDA key is provided, CDA views are loaded and attached to each entity (`entity.HasCDAView()`, `entity.CDAView()`). Set `Config.SkipAssets = true` to skip asset loading entirely. Provides entity lookups and filtering.
 
 - **`EntityCollection`** (`collection.go`) — chainable operations on entity sets: filtering (50+ built-in filters), pagination, concurrent iteration (`ForEachConcurrent`), field extraction, grouping, stats, and conversion to migration operations.
 

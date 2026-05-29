@@ -25,7 +25,8 @@ A Go library for Contentful migrations that provides a high-level interface for 
 - **Collection Operations**: Chain operations like filtering, mapping, grouping, and reducing
 - **Migration Execution**: Execute batch operations with dry-run support, concurrent execution, and comprehensive error handling
 - **DeepL Translation**: Built-in DeepL API integration for automated field translation with cost tracking
-- **Concurrent Loading**: Parallel loading of entries and assets for faster space initialization
+- **Incremental Cache Updates**: Efficiently refresh only recently changed entities using `UpdateSpaceModel`, ordered by `-sys.updatedAt`
+- **Concurrent Loading**: Parallel loading of entries and assets for faster space initialization, with adaptive per-content-type entry page sizes
 - **Selective Loading**: Skip asset loading with `SkipAssets` to save time and bandwidth when only entries are needed
 - **Configuration Management**: Load configuration from environment variables
 - **Portable Design**: Only depends on `github.com/foomo/contentful` and standard library
@@ -192,6 +193,30 @@ filtered := client.FilterEntities(
     commanderclient.FilterByUpdatedAfter(time.Now().AddDate(0, -1, 0)),
 )
 ```
+
+### Incremental Cache Updates
+
+After the initial `LoadSpaceModel`, you can efficiently refresh only the entities that have changed using `UpdateSpaceModel`. This avoids reloading the entire space and is ideal for long-running processes.
+
+```go
+client, logger, err := commanderclient.Init(config)
+if err != nil {
+    log.Fatal(err)
+}
+
+// ... perform work ...
+
+// Incrementally update the cache with only recently changed entities
+if err := client.UpdateSpaceModel(ctx, logger); err != nil {
+    log.Fatal(err)
+}
+```
+
+How it works:
+- The space model records the **start time** of each load/update (not the end time), so entities that changed during a previous load are caught on the next update
+- Entities are fetched in pages of 100, ordered by `-sys.updatedAt` (most recently changed first)
+- Pagination stops as soon as the oldest entity on a page is older than the previous update start time; entities with the exact cutoff timestamp are refreshed again to avoid missing rounded timestamps
+- Entries and assets are updated concurrently; CDA views are refreshed in a second phase if a CDA key is configured
 
 ### Collection Operations
 
@@ -889,7 +914,8 @@ log.Printf("Processed %d entities with %d errors",
 ## Performance Considerations
 
 - The library loads entire space models into memory for efficient operations
-- **Concurrent loading**: Entries and assets are loaded in parallel for faster initialization. When a CDA key is provided, CDA views are loaded in a second concurrent phase after CMA data
+- **Incremental updates**: Use `UpdateSpaceModel` instead of `LoadSpaceModel` to refresh only recently changed entities — significantly faster for large spaces with infrequent changes
+- **Concurrent loading**: Entries and assets are loaded in parallel for faster initialization. Initial entry loading is split by content type, starts with 1000-entry pages, and halves the page size only for content types that hit Contentful response-size limits. When a CDA key is provided, CDA views are loaded in a second concurrent phase after CMA data
 - **Skip assets**: Set `Config.SkipAssets = true` to skip asset loading entirely — useful for entry-only migrations where assets are irrelevant
 - **Concurrent batch execution**: `ExecuteBatch` runs operations concurrently (default: 3 parallel API calls, configurable via `client.SetConcurrency(n)`)
 - Use appropriate batch sizes for large operations
