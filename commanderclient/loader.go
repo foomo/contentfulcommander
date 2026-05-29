@@ -15,7 +15,7 @@ import (
 
 const (
 	initialEntryPageSize        uint16 = 1000
-	initialEntryLoadConcurrency        = 3
+	initialEntryLoadConcurrency int    = 3
 )
 
 // loadContentTypes loads all content types from the space
