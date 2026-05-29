@@ -21,7 +21,8 @@ type MigrationClient struct {
 	environment string
 	spaceModel  *SpaceModel
 	cache       map[string]Entity
-	cacheMu     sync.Mutex
+	cacheMu     sync.RWMutex
+	updateMu    sync.Mutex
 	stats       *MigrationStats
 	concurrency int
 	skipAssets  bool
@@ -89,6 +90,12 @@ func (mc *MigrationClient) GetStats() *MigrationStats {
 
 // LoadSpaceModel loads and caches the entire space model
 func (mc *MigrationClient) LoadSpaceModel(ctx context.Context, logger *Logger) error {
+	// Serialize with UpdateSpaceModel: a full reload and an incremental update
+	// must not run at the same time. Readers are not blocked during the load —
+	// the new model is built locally and swapped in atomically at the end.
+	mc.updateMu.Lock()
+	defer mc.updateMu.Unlock()
+
 	spaceModel := &SpaceModel{
 		SpaceID:      mc.spaceID,
 		Environment:  mc.environment,
@@ -111,7 +118,7 @@ func (mc *MigrationClient) LoadSpaceModel(ctx context.Context, logger *Logger) e
 	// Load entries and assets concurrently
 	g, gCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		if err := mc.loadEntries(gCtx, spaceModel, 512, logger); err != nil {
+		if err := mc.loadEntries(gCtx, spaceModel, 0, logger); err != nil {
 			return fmt.Errorf("failed to load entries: %w", err)
 		}
 		return nil
@@ -132,7 +139,7 @@ func (mc *MigrationClient) LoadSpaceModel(ctx context.Context, logger *Logger) e
 	if mc.cda != nil {
 		gCDA, gCDACtx := errgroup.WithContext(ctx)
 		gCDA.Go(func() error {
-			return mc.loadCDAEntries(gCDACtx, spaceModel, 512, logger)
+			return mc.loadCDAEntries(gCDACtx, spaceModel, 0, logger)
 		})
 		if !mc.skipAssets {
 			gCDA.Go(func() error {
@@ -144,76 +151,234 @@ func (mc *MigrationClient) LoadSpaceModel(ctx context.Context, logger *Logger) e
 		}
 	}
 
+	// Build the new cache locally, then swap it in under the write lock so
+	// concurrent readers never observe a partially populated cache.
+	newCache := make(map[string]Entity, len(spaceModel.Entries)+len(spaceModel.Assets))
+	maps.Copy(newCache, spaceModel.Entries)
+	maps.Copy(newCache, spaceModel.Assets)
+
+	mc.cacheMu.Lock()
 	mc.spaceModel = spaceModel
+	mc.cache = newCache
+	mc.stats.TotalEntities = len(newCache)
+	mc.cacheMu.Unlock()
 
-	// Update cache
-	mc.cache = make(map[string]Entity)
-	maps.Copy(mc.cache, spaceModel.Entries)
-	maps.Copy(mc.cache, spaceModel.Assets)
+	return nil
+}
 
-	mc.stats.TotalEntities = len(mc.cache)
+// UpdateSpaceModel incrementally updates the cached space model by fetching
+// only entities that have changed since the last LoadSpaceModel or UpdateSpaceModel call.
+// It uses order=-sys.updatedAt to load recently changed entities first and stops
+// when reaching entities older than the previous update start time.
+func (mc *MigrationClient) UpdateSpaceModel(ctx context.Context, logger *Logger) error {
+	// Serialize updates: concurrent calls would race on LastUpdated and on the
+	// cache map. A waiting caller proceeds with the freshly written cutoff.
+	mc.updateMu.Lock()
+	defer mc.updateMu.Unlock()
+
+	mc.cacheMu.RLock()
+	if mc.spaceModel == nil {
+		mc.cacheMu.RUnlock()
+		return fmt.Errorf("space model not loaded, call LoadSpaceModel first")
+	}
+	cutoff := mc.spaceModel.LastUpdated
+	mc.cacheMu.RUnlock()
+
+	updateStart := time.Now()
+
+	// Update entries and assets concurrently
+	var updatedEntries map[string]*EntryEntity
+	var updatedAssets map[string]*AssetEntity
+	g, gCtx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		entries, err := mc.updateEntries(gCtx, cutoff, logger)
+		if err != nil {
+			return err
+		}
+		updatedEntries = entries
+		return nil
+	})
+	if !mc.skipAssets {
+		g.Go(func() error {
+			assets, err := mc.updateAssets(gCtx, cutoff, logger)
+			if err != nil {
+				return err
+			}
+			updatedAssets = assets
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	// Update CDA views for changed entities
+	var updatedCDAEntries map[string]Entity
+	var updatedCDAAssets map[string]Entity
+	if mc.cda != nil {
+		gCDA, gCDACtx := errgroup.WithContext(ctx)
+		gCDA.Go(func() error {
+			entries, err := mc.updateCDAEntries(gCDACtx, cutoff, logger)
+			if err != nil {
+				return err
+			}
+			updatedCDAEntries = entries
+			return nil
+		})
+		if !mc.skipAssets {
+			gCDA.Go(func() error {
+				assets, err := mc.updateCDAAssets(gCDACtx, cutoff, logger)
+				if err != nil {
+					return err
+				}
+				updatedCDAAssets = assets
+				return nil
+			})
+		}
+		if err := gCDA.Wait(); err != nil {
+			return err
+		}
+	}
+
+	mc.cacheMu.Lock()
+	current := mc.spaceModel
+	spaceModel := &SpaceModel{
+		SpaceID:       current.SpaceID,
+		Environment:   current.Environment,
+		Locales:       append([]LocaleInfo(nil), current.Locales...),
+		DefaultLocale: current.DefaultLocale,
+		ContentTypes:  maps.Clone(current.ContentTypes),
+		Entries:       maps.Clone(current.Entries),
+		Assets:        maps.Clone(current.Assets),
+		LastUpdated:   updateStart,
+	}
+
+	for id, entity := range updatedEntries {
+		if previous, ok := spaceModel.Entries[id]; ok && entity.GetPublishingStatus() != StatusDraft {
+			entity.cdaView = previous.CDAView()
+		}
+		spaceModel.Entries[id] = entity
+	}
+	for id, entity := range updatedAssets {
+		if previous, ok := spaceModel.Assets[id]; ok && entity.GetPublishingStatus() != StatusDraft {
+			entity.cdaView = previous.CDAView()
+		}
+		spaceModel.Assets[id] = entity
+	}
+	for id, cdaView := range updatedCDAEntries {
+		if cmaEntity, ok := spaceModel.Entries[id]; ok {
+			if entryEntity, ok := cmaEntity.(*EntryEntity); ok {
+				spaceModel.Entries[id] = &EntryEntity{
+					Entry:   entryEntity.Entry,
+					Client:  entryEntity.Client,
+					cdaView: cdaView,
+				}
+			}
+		}
+	}
+	for id, cdaView := range updatedCDAAssets {
+		if cmaEntity, ok := spaceModel.Assets[id]; ok {
+			if assetEntity, ok := cmaEntity.(*AssetEntity); ok {
+				spaceModel.Assets[id] = &AssetEntity{
+					Asset:   assetEntity.Asset,
+					Client:  assetEntity.Client,
+					cdaView: cdaView,
+				}
+			}
+		}
+	}
+
+	newCache := make(map[string]Entity, len(spaceModel.Entries)+len(spaceModel.Assets))
+	maps.Copy(newCache, spaceModel.Entries)
+	maps.Copy(newCache, spaceModel.Assets)
+
+	mc.spaceModel = spaceModel
+	mc.cache = newCache
+	mc.stats.TotalEntities = len(newCache)
+	mc.cacheMu.Unlock()
 
 	return nil
 }
 
 // GetSpaceModel returns the cached space model
 func (mc *MigrationClient) GetSpaceModel() *SpaceModel {
+	mc.cacheMu.RLock()
+	defer mc.cacheMu.RUnlock()
 	return mc.spaceModel
 }
 
 // GetEntity retrieves an entity by ID from cache
 func (mc *MigrationClient) GetEntity(id string) (Entity, bool) {
+	mc.cacheMu.RLock()
+	defer mc.cacheMu.RUnlock()
 	entity, exists := mc.cache[id]
 	return entity, exists
 }
 
 // GetAllEntities returns all cached entities
 func (mc *MigrationClient) GetAllEntities() *EntityCollection {
+	mc.cacheMu.RLock()
 	entities := make([]Entity, 0, len(mc.cache))
 	for _, entity := range mc.cache {
 		entities = append(entities, entity)
 	}
+	mc.cacheMu.RUnlock()
 	return NewEntityCollection(entities)
 }
 
 // GetEntries returns all entry entities
 func (mc *MigrationClient) GetEntries() *EntityCollection {
+	mc.cacheMu.RLock()
 	var entries []Entity
 	for _, entity := range mc.cache {
 		if entity.GetType() == "Entry" {
 			entries = append(entries, entity)
 		}
 	}
+	mc.cacheMu.RUnlock()
 	return NewEntityCollection(entries)
 }
 
 // GetAssets returns all asset entities
 func (mc *MigrationClient) GetAssets() *EntityCollection {
+	mc.cacheMu.RLock()
 	var assets []Entity
 	for _, entity := range mc.cache {
 		if entity.GetType() == "Asset" {
 			assets = append(assets, entity)
 		}
 	}
+	mc.cacheMu.RUnlock()
 	return NewEntityCollection(assets)
 }
 
 // GetEntitiesByContentType returns entities filtered by content type
 func (mc *MigrationClient) GetEntitiesByContentType(contentType string) *EntityCollection {
+	mc.cacheMu.RLock()
 	var entities []Entity
 	for _, entity := range mc.cache {
 		if entity.GetType() == "Entry" && entity.GetContentType() == contentType {
 			entities = append(entities, entity)
 		}
 	}
+	mc.cacheMu.RUnlock()
 	return NewEntityCollection(entities)
 }
 
 // FilterEntities applies filters to entities and returns a collection
 func (mc *MigrationClient) FilterEntities(filters ...EntityFilter) *EntityCollection {
-	var filtered []Entity
-
+	// Snapshot the cache under the read lock, then evaluate filters without it.
+	// Filters are arbitrary callbacks that may call back into the client
+	// (e.g. GetEntity), so they must not run while the lock is held.
+	mc.cacheMu.RLock()
+	snapshot := make([]Entity, 0, len(mc.cache))
 	for _, entity := range mc.cache {
+		snapshot = append(snapshot, entity)
+	}
+	mc.cacheMu.RUnlock()
+
+	var filtered []Entity
+	for _, entity := range snapshot {
 		matches := true
 		for _, filter := range filters {
 			if !filter(entity) {
@@ -333,6 +498,8 @@ func (mc *MigrationClient) loadLocales(ctx context.Context, spaceModel *SpaceMod
 
 // GetLocales returns the locales for the space
 func (mc *MigrationClient) GetLocales() []LocaleInfo {
+	mc.cacheMu.RLock()
+	defer mc.cacheMu.RUnlock()
 	if mc.spaceModel == nil {
 		return []LocaleInfo{}
 	}
@@ -341,6 +508,8 @@ func (mc *MigrationClient) GetLocales() []LocaleInfo {
 
 // GetDefaultLocale returns the default locale for the space
 func (mc *MigrationClient) GetDefaultLocale() Locale {
+	mc.cacheMu.RLock()
+	defer mc.cacheMu.RUnlock()
 	if mc.spaceModel == nil {
 		return ""
 	}
@@ -349,6 +518,8 @@ func (mc *MigrationClient) GetDefaultLocale() Locale {
 
 // GetLocaleCodes returns all locale codes for the space
 func (mc *MigrationClient) GetLocaleCodes() []Locale {
+	mc.cacheMu.RLock()
+	defer mc.cacheMu.RUnlock()
 	if mc.spaceModel == nil {
 		return []Locale{}
 	}
