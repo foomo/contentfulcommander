@@ -22,22 +22,22 @@ func FieldMaxLength(field *contentful.Field) (int, bool) {
 		return 0, false
 	}
 
-	var max int
+	var maxSize int
 	for _, validation := range field.Validations {
 		size := fieldValidationSize(validation)
 		if size == nil || size.Size == nil || size.Size.Max <= 0 {
 			continue
 		}
 		current := int(size.Size.Max)
-		if max == 0 || current < max {
-			max = current
+		if maxSize == 0 || current < maxSize {
+			maxSize = current
 		}
 	}
 
-	if max == 0 {
+	if maxSize == 0 {
 		return 0, false
 	}
-	return max, true
+	return maxSize, true
 }
 
 // FieldMinLength returns the strictest min size validation for the field.
@@ -46,22 +46,22 @@ func FieldMinLength(field *contentful.Field) (int, bool) {
 		return 0, false
 	}
 
-	var min int
+	var minSize int
 	for _, validation := range field.Validations {
 		size := fieldValidationSize(validation)
 		if size == nil || size.Size == nil || size.Size.Min <= 0 {
 			continue
 		}
 		current := int(size.Size.Min)
-		if current > min {
-			min = current
+		if current > minSize {
+			minSize = current
 		}
 	}
 
-	if min == 0 {
+	if minSize == 0 {
 		return 0, false
 	}
-	return min, true
+	return minSize, true
 }
 
 // FieldAllowedValues returns the first predefined-values validation for the field.
