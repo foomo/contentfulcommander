@@ -489,6 +489,20 @@ func FilterByFieldExistsWithLocale(fieldName string, locale Locale) EntityFilter
 	}
 }
 
+// FilterByFieldEmptyWithLocale returns a filter for entities where a field is empty for a locale.
+func FilterByFieldEmptyWithLocale(fieldName string, locale Locale) EntityFilter {
+	return func(entity Entity) bool {
+		return entity.IsFieldNullOrEmpty(fieldName, locale)
+	}
+}
+
+// FilterByFieldNotEmptyWithLocale returns a filter for entities where a field is not empty for a locale.
+func FilterByFieldNotEmptyWithLocale(fieldName string, locale Locale) EntityFilter {
+	return func(entity Entity) bool {
+		return !entity.IsFieldNullOrEmpty(fieldName, locale)
+	}
+}
+
 // FilterHasCDAView returns a filter for entities that have a CDA view attached
 func FilterHasCDAView() EntityFilter {
 	return func(entity Entity) bool {

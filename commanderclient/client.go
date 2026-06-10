@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"reflect"
 	"sync"
 	"time"
 
@@ -307,6 +308,68 @@ func (mc *MigrationClient) GetSpaceModel() *SpaceModel {
 	return mc.spaceModel
 }
 
+// GetContentType retrieves a content type by ID from the loaded space model.
+func (mc *MigrationClient) GetContentType(contentTypeID string) (*contentful.ContentType, bool) {
+	if mc == nil {
+		return nil, false
+	}
+
+	mc.cacheMu.RLock()
+	defer mc.cacheMu.RUnlock()
+
+	if mc.spaceModel == nil || mc.spaceModel.ContentTypes == nil {
+		return nil, false
+	}
+
+	contentType, exists := mc.spaceModel.ContentTypes[contentTypeID]
+	if !exists || contentType == nil {
+		return nil, false
+	}
+	return contentType, true
+}
+
+// GetContentTypeField retrieves a field from a content type in the loaded space model.
+func (mc *MigrationClient) GetContentTypeField(contentTypeID string, fieldID string) (*contentful.Field, bool) {
+	contentType, exists := mc.GetContentType(contentTypeID)
+	if !exists {
+		return nil, false
+	}
+
+	for _, field := range contentType.Fields {
+		if field != nil && field.ID == fieldID {
+			return field, true
+		}
+	}
+	return nil, false
+}
+
+// GetEntryDisplayName returns the raw locale value of the content type display field, or the entity ID.
+func (mc *MigrationClient) GetEntryDisplayName(entity Entity, locale Locale) string {
+	if isNilEntity(entity) {
+		return ""
+	}
+
+	entityID := entity.GetID()
+	contentTypeID := entity.GetContentType()
+	if contentTypeID == "" {
+		return entityID
+	}
+
+	contentType, exists := mc.GetContentType(contentTypeID)
+	if !exists || contentType.DisplayField == "" {
+		return entityID
+	}
+
+	value := entity.GetFieldValue(contentType.DisplayField, locale)
+	if isNullOrEmpty(value) {
+		return entityID
+	}
+	if stringValue, ok := value.(string); ok {
+		return stringValue
+	}
+	return fmt.Sprintf("%v", value)
+}
+
 // GetEntity retrieves an entity by ID from cache
 func (mc *MigrationClient) GetEntity(id string) (Entity, bool) {
 	mc.cacheMu.RLock()
@@ -438,6 +501,89 @@ func (mc *MigrationClient) RefreshEntity(ctx context.Context, id string) error {
 	}
 
 	return fmt.Errorf("entity %s not found", id)
+}
+
+// SaveDraft persists the current in-memory entity fields without publishing.
+func (mc *MigrationClient) SaveDraft(ctx context.Context, entity Entity) error {
+	if err := mc.validateEntityMutation(entity); err != nil {
+		return err
+	}
+
+	executor := NewMigrationExecutor(mc, &MigrationOptions{DryRun: false, Confirm: false})
+	_, err := executor.upsertEntity(ctx, &MigrationOperation{
+		EntityID:  entity.GetID(),
+		Operation: OperationUpsert,
+		Entity:    entity,
+	})
+	if err != nil {
+		return fmt.Errorf("save draft failed for %s %q: %w", entity.GetType(), entity.GetID(), err)
+	}
+	return nil
+}
+
+// Publish publishes the entity. It does not persist unsaved in-memory field
+// edits — call SaveDraft first if the entity has been modified.
+func (mc *MigrationClient) Publish(ctx context.Context, entity Entity) error {
+	if err := mc.validateEntityMutation(entity); err != nil {
+		return err
+	}
+
+	executor := NewMigrationExecutor(mc, &MigrationOptions{DryRun: false, Confirm: false})
+	_, err := executor.publishEntity(ctx, &MigrationOperation{
+		EntityID:  entity.GetID(),
+		Operation: OperationPublish,
+		Entity:    entity,
+	})
+	if err != nil {
+		return fmt.Errorf("publish failed for %s %q: %w", entity.GetType(), entity.GetID(), err)
+	}
+	return nil
+}
+
+func (mc *MigrationClient) validateEntityMutation(entity Entity) error {
+	if mc == nil {
+		return fmt.Errorf("migration client is nil")
+	}
+	if mc.cma == nil {
+		return fmt.Errorf("migration client has no CMA client")
+	}
+	if isNilEntity(entity) {
+		return fmt.Errorf("entity is nil")
+	}
+
+	switch typed := entity.(type) {
+	case *EntryEntity:
+		if typed.Entry == nil {
+			return fmt.Errorf("entry entity has nil entry")
+		}
+		if typed.Entry.Sys == nil {
+			return fmt.Errorf("entry entity has nil sys")
+		}
+	case *AssetEntity:
+		if typed.Asset == nil {
+			return fmt.Errorf("asset entity has nil asset")
+		}
+		if typed.Asset.Sys == nil {
+			return fmt.Errorf("asset entity has nil sys")
+		}
+	default:
+		return fmt.Errorf("unsupported entity type %T", entity)
+	}
+
+	return nil
+}
+
+func isNilEntity(entity Entity) bool {
+	if entity == nil {
+		return true
+	}
+	value := reflect.ValueOf(entity)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
 }
 
 // RemoveEntity removes an entity from the cache

@@ -14,6 +14,7 @@ A Go library for Contentful migrations that provides a high-level interface for 
 
 - **Unified Entity Interface**: Work with both Contentful entries and assets through a common interface
 - **Space Model Caching**: Load and cache entire space models for efficient operations
+- **Content Model Helpers**: Safe lookup helpers for content types, fields, and validation metadata
 - **Dual CMA/CDA Loading**: Load management (CMA) and delivery (CDA) views side-by-side for diff-style comparisons
 - **Locale-Aware Operations**: Native support for Contentful's localization system with locale-specific field access
 - **Type-Safe Field Access**: Specialized methods for different field types (string, float64, bool, references)
@@ -25,6 +26,7 @@ A Go library for Contentful migrations that provides a high-level interface for 
 - **Collection Operations**: Chain operations like filtering, mapping, grouping, and reducing
 - **Migration Execution**: Execute batch operations with dry-run support, concurrent execution, and comprehensive error handling
 - **DeepL Translation**: Built-in DeepL API integration for automated field translation with cost tracking
+- **Basic RichText Markdown Conversion**: Convert supported Contentful RichText documents to/from a safe Markdown subset
 - **Incremental Cache Updates**: Efficiently refresh only recently changed entities using `UpdateSpaceModel`, ordered by `-sys.updatedAt`
 - **Concurrent Loading**: Parallel loading of entries and assets for faster space initialization, with adaptive per-content-type entry page sizes
 - **Selective Loading**: Skip asset loading with `SkipAssets` to save time and bandwidth when only entries are needed
@@ -193,6 +195,26 @@ filtered := client.FilterEntities(
     commanderclient.FilterByUpdatedAfter(time.Now().AddDate(0, -1, 0)),
 )
 ```
+
+### Content Model Helpers
+
+After the space model is loaded, `MigrationClient` can safely look up content model metadata without reaching into `SpaceModel` directly:
+
+```go
+contentType, ok := client.GetContentType("article")
+if !ok {
+    log.Println("content type is missing or the space model is not loaded")
+} else {
+    log.Printf("Content type: %s", contentType.Name)
+}
+
+field, ok := client.GetContentTypeField("article", "title")
+if ok && commanderclient.FieldIsEditable(field) {
+    log.Printf("Field %s can be edited", field.ID)
+}
+```
+
+Both helpers return `false` when the space model is not loaded, when the content type or field is missing, or when the cached model contains nil entries.
 
 ### Incremental Cache Updates
 
@@ -390,11 +412,56 @@ if err := categoryEntity.GetFieldValueInto("catalogueQuery", commanderclient.Loc
 }
 ```
 
+### Field Validation Metadata
+
+Content model fields can expose validation metadata such as size limits, allowed values, and regular expressions. Because `contentful.Field` is defined in the Contentful SDK, these helpers are ordinary package functions:
+
+```go
+field, ok := client.GetContentTypeField("article", "slug")
+if !ok {
+    log.Fatal("missing field")
+}
+
+if commanderclient.FieldIsEditable(field) {
+    log.Println("field is editable")
+}
+if maxLength, ok := commanderclient.FieldMaxLength(field); ok {
+    log.Printf("max length: %d", maxLength)
+}
+if minLength, ok := commanderclient.FieldMinLength(field); ok {
+    log.Printf("min length: %d", minLength)
+}
+if allowedValues, ok := commanderclient.FieldAllowedValues(field); ok {
+    log.Printf("allowed values: %v", allowedValues)
+}
+if pattern, flags, ok := commanderclient.FieldRegex(field); ok {
+    log.Printf("regex: /%s/%s", pattern, flags)
+}
+
+summary := commanderclient.GetFieldValidationSummary(field)
+```
+
+`FieldMaxLength` returns the lowest non-zero max from `size` validations, and `FieldMinLength` returns the highest min. `FieldAllowedValues` returns the first predefined-values validation. `GetFieldValidationSummary` returns a serializable `FieldValidationSummary`:
+
+```go
+type FieldValidationSummary struct {
+    MinLength     *int  `json:"minLength,omitempty"`
+    MaxLength     *int  `json:"maxLength,omitempty"`
+    AllowedValues []any `json:"allowedValues,omitempty"`
+    RegexPattern  string `json:"regexPattern,omitempty"`
+    RegexFlags    string `json:"regexFlags,omitempty"`
+}
+```
+
 ### Entity-Specific Methods
 
 ```go
 // Get title (uses content type display field for entries, asset title for assets)
 title := entity.GetTitle(commanderclient.Locale("en"))
+
+// Get the raw locale value of the content type display field.
+// Unlike GetTitle, this does not apply locale fallback.
+displayName := client.GetEntryDisplayName(entity, commanderclient.Locale("en"))
 
 // Get description (assets only, returns empty string for entries)
 description := entity.GetDescription(commanderclient.Locale("en"))
@@ -406,6 +473,65 @@ if file != nil {
     fmt.Printf("URL: %s\n", file.URL)
 }
 ```
+
+## RichText Markdown Conversion
+
+For service integrations that need a simple editable text format, Contentful RichText can be converted to and from a supported Markdown subset:
+
+```go
+value := entity.GetFieldValue("body", commanderclient.Locale("en"))
+
+markdown, warnings, err := commanderclient.RichTextToMarkdown(value)
+if err != nil {
+    log.Fatal(err)
+}
+for _, warning := range warnings {
+    log.Printf("RichText warning: %s", warning)
+}
+
+if err := commanderclient.IsSupportedRichTextMarkdown(markdown); err != nil {
+    log.Fatal(err)
+}
+
+richText, err := commanderclient.MarkdownToRichText(markdown)
+if err != nil {
+    log.Fatal(err)
+}
+entity.SetFieldValue("body", commanderclient.Locale("de"), richText)
+```
+
+Supported Markdown/RichText constructs:
+
+- Document root
+- Paragraphs
+- Headings levels 1-3
+- Unordered and ordered lists
+- List items
+- Bold and italic text
+- Hyperlinks (see below)
+- Tables (see below)
+- Plain text line breaks where practical
+
+### Hyperlinks
+
+- External links round-trip as standard Markdown: `[text](https://example.com)`.
+- Entry and asset hyperlinks have no URL, so they use a custom scheme that round-trips losslessly: `[text](entry:<id>)` and `[text](asset:<id>)`.
+- Link text may itself contain bold/italic, e.g. `[**bold** label](https://example.com)`.
+- Images (`![alt](url)`) remain unsupported and are rejected on write.
+
+### Tables
+
+Tables convert to and from [GitHub-Flavored Markdown](https://github.github.com/gfm/#tables-extension-) pipe tables:
+
+```
+| Name | Price |
+| --- | --- |
+| Widget | 9.99 |
+```
+
+The first row is the header row, and cells hold inline content (text, bold/italic, links). Because GFM tables cannot represent everything Contentful tables can, content that does not fit is degraded with a `warnings` entry on read: block content inside a cell (lists, multiple paragraphs) is flattened to text, header cells outside the first row become regular cells, a table with no header row uses its first row as the header, and ragged rows are padded to the column count.
+
+Unsupported Markdown is rejected on write so callers do not accidentally persist lossy RichText. Unsupported RichText nodes encountered while reading are rendered as plain text where possible and reported in `warnings`. Unsupported constructs include embedded entries, embedded assets, images, arbitrary custom nodes, raw HTML, code spans, code blocks, blockquotes, and horizontal rules.
 
 ## Locale Support
 
@@ -441,6 +567,14 @@ englishEntries := client.FilterEntities(
 // Filter by field value with fallback to default locale
 entriesWithWelcome := client.FilterEntities(
     commanderclient.FilterByFieldValueWithFallback("title", commanderclient.Locale("fr"), defaultLocale, "Welcome"),
+)
+
+// Filter by empty/not-empty field values for a specific locale
+missingGermanDescriptions := client.FilterEntities(
+    commanderclient.FilterByFieldEmptyWithLocale("description", commanderclient.Locale("de")),
+)
+englishDescriptions := client.FilterEntities(
+    commanderclient.FilterByFieldNotEmptyWithLocale("description", commanderclient.Locale("en")),
 )
 
 // Filter by locale availability
@@ -650,6 +784,27 @@ title := asset.GetFieldValueAsString("title", commanderclient.Locale("en")) // R
 
 The library supports the following migration operations, each defined as a constant for type safety:
 
+### Direct Draft Save and Publish
+
+For service code that is not building a migration batch, use the explicit convenience methods on `MigrationClient`:
+
+```go
+entity.SetFieldValue("title", commanderclient.Locale("en"), "Updated title")
+
+// Persist the current in-memory fields without publishing.
+// This does not republish an entity that was previously published.
+if err := client.SaveDraft(ctx, entity); err != nil {
+    log.Fatal(err)
+}
+
+// Publish the entity when the caller explicitly wants to make it live.
+if err := client.Publish(ctx, entity); err != nil {
+    log.Fatal(err)
+}
+```
+
+`SaveDraft` uses the same persistence behavior as `OperationUpsert`, and `Publish` uses the same publish behavior as `OperationPublish`, without dry-run or interactive confirmation.
+
 ### Available Operations
 
 ```go
@@ -784,6 +939,9 @@ commanderclient.FilterByUpdatedAfter(time)
 commanderclient.FilterByFieldValue("status", "active")
 commanderclient.FilterByFieldExists("description")
 commanderclient.FilterByFieldContains("title", "important")
+commanderclient.FilterByFieldValueWithLocale("title", commanderclient.Locale("en"), "Welcome")
+commanderclient.FilterByFieldEmptyWithLocale("description", commanderclient.Locale("de"))
+commanderclient.FilterByFieldNotEmptyWithLocale("description", commanderclient.Locale("en"))
 
 // ID patterns
 commanderclient.FilterByIDPattern("prod-")

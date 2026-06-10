@@ -186,3 +186,37 @@ func (n *RichTextNode) setHyperlinkURI(uri string) {
 	}
 	n.Data["uri"] = uri
 }
+
+// getHyperlinkTarget returns the linkType ("Entry"/"Asset") and id from an
+// entry-hyperlink or asset-hyperlink node's data.target.sys structure.
+func (n *RichTextNode) getHyperlinkTarget() (linkType string, id string, ok bool) {
+	target, ok := n.Data["target"].(map[string]any)
+	if !ok {
+		return "", "", false
+	}
+	sys, ok := target["sys"].(map[string]any)
+	if !ok {
+		return "", "", false
+	}
+	linkType, _ = sys["linkType"].(string)
+	id, _ = sys["id"].(string)
+	if id == "" {
+		return "", "", false
+	}
+	return linkType, id, true
+}
+
+// setHyperlinkTarget sets the data.target.sys link structure for an
+// entry-hyperlink or asset-hyperlink node.
+func (n *RichTextNode) setHyperlinkTarget(linkType string, id string) {
+	if n.Data == nil {
+		n.Data = make(map[string]any)
+	}
+	n.Data["target"] = map[string]any{
+		"sys": map[string]any{
+			"type":     "Link",
+			"linkType": linkType,
+			"id":       id,
+		},
+	}
+}
