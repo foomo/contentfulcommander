@@ -503,6 +503,32 @@ func (mc *MigrationClient) RefreshEntity(ctx context.Context, id string) error {
 	return fmt.Errorf("entity %s not found", id)
 }
 
+// syncEntityVersion fetches the current sys version for the entity from the CMA
+// and writes it back into the in-memory entity, leaving field edits intact. Used
+// to recover from a version conflict before retrying a write.
+func (mc *MigrationClient) syncEntityVersion(ctx context.Context, entity Entity) error {
+	switch e := entity.(type) {
+	case *EntryEntity:
+		latest, err := mc.cma.Entries.Get(ctx, mc.spaceID, e.Entry.Sys.ID)
+		if err != nil {
+			return err
+		}
+		e.Entry.Sys.Version = latest.Sys.Version
+		e.Entry.Sys.PublishedVersion = latest.Sys.PublishedVersion
+		return nil
+	case *AssetEntity:
+		latest, err := mc.cma.Assets.Get(ctx, mc.spaceID, e.Asset.Sys.ID)
+		if err != nil {
+			return err
+		}
+		e.Asset.Sys.Version = latest.Sys.Version
+		e.Asset.Sys.PublishedVersion = latest.Sys.PublishedVersion
+		return nil
+	default:
+		return fmt.Errorf("unsupported entity type %T", entity)
+	}
+}
+
 // SaveDraft persists the current in-memory entity fields without publishing.
 func (mc *MigrationClient) SaveDraft(ctx context.Context, entity Entity) error {
 	if err := mc.validateEntityMutation(entity); err != nil {
