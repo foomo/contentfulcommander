@@ -3,6 +3,7 @@ package commanderclient
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/foomo/contentful"
 )
 
 // MigrationOperation represents a migration operation to be performed
@@ -245,6 +248,22 @@ func (me *MigrationExecutor) GetErrorCount() int {
 	return count
 }
 
+// writeWithVersionRetry runs a CMA write and, on a Contentful version conflict
+// (HTTP 409), re-fetches the entity's current version from the server and retries
+// the write exactly once. Only Sys.Version/PublishedVersion are refreshed, so
+// locally-edited fields are preserved across the retry.
+func (me *MigrationExecutor) writeWithVersionRetry(ctx context.Context, entity Entity, write func() error) error {
+	err := write()
+	var mismatch contentful.VersionMismatchError
+	if err == nil || !errors.As(err, &mismatch) {
+		return err
+	}
+	if syncErr := me.client.syncEntityVersion(ctx, entity); syncErr != nil {
+		return fmt.Errorf("version conflict and version refresh failed: %w (original conflict: %w)", syncErr, err)
+	}
+	return write()
+}
+
 // upsertEntity updates an entity with new fields.
 // The SDK's Upsert decodes the API response into the entry/asset struct in-place,
 // so there is no need to re-fetch — the entity already carries the updated version.
@@ -260,7 +279,9 @@ func (me *MigrationExecutor) upsertEntity(ctx context.Context, op *MigrationOper
 		}
 
 		// Update the entry (SDK updates entry.Sys.Version in-place from the response)
-		err := me.client.cma.Entries.Upsert(ctx, me.client.spaceID, entry)
+		err := me.writeWithVersionRetry(ctx, op.Entity, func() error {
+			return me.client.cma.Entries.Upsert(ctx, me.client.spaceID, entry)
+		})
 		if err != nil {
 			return false, err
 		}
@@ -288,7 +309,9 @@ func (me *MigrationExecutor) upsertEntity(ctx context.Context, op *MigrationOper
 		}
 
 		// Update the asset (SDK updates asset.Sys.Version in-place from the response)
-		err := me.client.cma.Assets.Upsert(ctx, me.client.spaceID, asset)
+		err := me.writeWithVersionRetry(ctx, op.Entity, func() error {
+			return me.client.cma.Assets.Upsert(ctx, me.client.spaceID, asset)
+		})
 		if err != nil {
 			return false, err
 		}
@@ -333,7 +356,9 @@ func (me *MigrationExecutor) publishEntity(ctx context.Context, op *MigrationOpe
 		entryEntity := op.Entity.(*EntryEntity)
 		entry := entryEntity.Entry
 
-		err := me.client.cma.Entries.Publish(ctx, me.client.spaceID, entry)
+		err := me.writeWithVersionRetry(ctx, op.Entity, func() error {
+			return me.client.cma.Entries.Publish(ctx, me.client.spaceID, entry)
+		})
 		if err != nil {
 			return false, err
 		}
@@ -352,7 +377,9 @@ func (me *MigrationExecutor) publishEntity(ctx context.Context, op *MigrationOpe
 
 		// Assets.Publish updates the struct in-place, so no refresh is strictly needed,
 		// but we refresh to keep the cache consistent.
-		err := me.client.cma.Assets.Publish(ctx, me.client.spaceID, asset)
+		err := me.writeWithVersionRetry(ctx, op.Entity, func() error {
+			return me.client.cma.Assets.Publish(ctx, me.client.spaceID, asset)
+		})
 		if err != nil {
 			return false, err
 		}
@@ -369,7 +396,9 @@ func (me *MigrationExecutor) unpublishEntity(ctx context.Context, op *MigrationO
 		entryEntity := op.Entity.(*EntryEntity)
 		entry := entryEntity.Entry
 
-		err := me.client.cma.Entries.Unpublish(ctx, me.client.spaceID, entry)
+		err := me.writeWithVersionRetry(ctx, op.Entity, func() error {
+			return me.client.cma.Entries.Unpublish(ctx, me.client.spaceID, entry)
+		})
 		if err != nil {
 			return false, err
 		}
@@ -385,7 +414,9 @@ func (me *MigrationExecutor) unpublishEntity(ctx context.Context, op *MigrationO
 		asset := assetEntity.Asset
 
 		// Assets.Unpublish updates the struct in-place.
-		err := me.client.cma.Assets.Unpublish(ctx, me.client.spaceID, asset)
+		err := me.writeWithVersionRetry(ctx, op.Entity, func() error {
+			return me.client.cma.Assets.Unpublish(ctx, me.client.spaceID, asset)
+		})
 		if err != nil {
 			return false, err
 		}
