@@ -282,7 +282,7 @@ func TestCreateAssetFromURLProcessingTimeout(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "was not processed within")
-	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 
 	_, found := client.GetEntity(testAssetID)
 	assert.False(t, found, "a failed creation must not be cached")
