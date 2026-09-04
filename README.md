@@ -25,6 +25,7 @@ A Go library for Contentful migrations that provides a high-level interface for 
 - **Flexible Filtering**: Filter entities by content type, publication status, CDA availability, timestamps, and custom criteria
 - **Collection Operations**: Chain operations like filtering, mapping, grouping, and reducing
 - **Migration Execution**: Execute batch operations with dry-run support, concurrent execution, and comprehensive error handling
+- **Asset Creation**: Create assets from a remote URL with `CreateAssetFromURL`, which handles the upload/process/wait cycle
 - **DeepL Translation**: Built-in DeepL API integration for automated field translation with cost tracking
 - **Basic RichText Markdown Conversion**: Convert supported Contentful RichText documents to/from a safe Markdown subset
 - **Incremental Cache Updates**: Efficiently refresh only recently changed entities using `UpdateSpaceModel`, ordered by `-sys.updatedAt`
@@ -804,6 +805,55 @@ if err := client.Publish(ctx, entity); err != nil {
 ```
 
 `SaveDraft` uses the same persistence behavior as `OperationUpsert`, and `Publish` uses the same publish behavior as `OperationPublish`, without dry-run or interactive confirmation.
+
+### Creating Assets from a URL
+
+Contentful fetches the file itself from a remote URL. The flow is create draft → trigger processing → wait
+for processing to finish, and `CreateAssetFromURL` wraps all three:
+
+```go
+// Writing an asset needs no space model, so both halves of the sync can be skipped:
+// Init then only loads locales and content types.
+config := commanderclient.LoadConfigFromEnv()
+config.SkipEntries = true
+config.SkipAssets = true
+
+client, _, err := commanderclient.Init(config)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Returns once Contentful has processed the file, so the asset already has its CDN URL.
+asset, err := client.CreateAssetFromURL(ctx,
+    "moonsample",                        // asset ID — empty lets Contentful generate one
+    "https://example.com/img/moon.jpg",  // Contentful fetches this
+    "image/jpeg",                        // content type
+    "Moon",                              // title
+    commanderclient.Locale("en"),        // empty uses the space default locale
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+file := asset.GetFile(commanderclient.Locale("en"))
+fmt.Printf("created %s at https:%s\n", asset.GetID(), file.URL)
+
+// Same, but published rather than left as a draft.
+asset, err = client.CreateAssetFromURLAndPublish(ctx, "moonsample2", url, "image/jpeg", "Moon", "en")
+```
+
+Details worth knowing:
+
+- **File name** is derived from the URL's last path segment (`moon.jpg` above, query string stripped). If
+  the URL has no usable segment, the asset ID is used.
+- **Title is required.** Contentful only processes locales that have a title, so an untitled asset would be
+  silently skipped and never finish processing.
+- **Processing is asynchronous.** The methods poll until the CDN URL appears, bounded by `ctx`. If `ctx` has
+  no deadline, they give up after 2 minutes. Use `context.WithTimeout` to shorten that.
+- **Creating over an existing ID is an error** rather than an overwrite — use `SaveDraft` to modify an
+  existing asset.
+- The new asset is added to the client cache, so `GetEntity`/`GetAssets` see it immediately.
+- Only remote URLs are supported; uploading local file bytes is not.
 
 ### Available Operations
 
