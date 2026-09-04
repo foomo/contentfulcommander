@@ -27,6 +27,7 @@ type MigrationClient struct {
 	stats       *MigrationStats
 	concurrency int
 	skipAssets  bool
+	skipEntries bool
 }
 
 // newMigrationClient creates a new migration client
@@ -118,12 +119,14 @@ func (mc *MigrationClient) LoadSpaceModel(ctx context.Context, logger *Logger) e
 
 	// Load entries and assets concurrently
 	g, gCtx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		if err := mc.loadEntries(gCtx, spaceModel, 0, logger); err != nil {
-			return fmt.Errorf("failed to load entries: %w", err)
-		}
-		return nil
-	})
+	if !mc.skipEntries {
+		g.Go(func() error {
+			if err := mc.loadEntries(gCtx, spaceModel, 0, logger); err != nil {
+				return fmt.Errorf("failed to load entries: %w", err)
+			}
+			return nil
+		})
+	}
 	if !mc.skipAssets {
 		g.Go(func() error {
 			if err := mc.loadAssets(gCtx, spaceModel, logger); err != nil {
@@ -139,9 +142,11 @@ func (mc *MigrationClient) LoadSpaceModel(ctx context.Context, logger *Logger) e
 	// Load CDA views (must run after CMA phase — needs CMA entities to attach to)
 	if mc.cda != nil {
 		gCDA, gCDACtx := errgroup.WithContext(ctx)
-		gCDA.Go(func() error {
-			return mc.loadCDAEntries(gCDACtx, spaceModel, 0, logger)
-		})
+		if !mc.skipEntries {
+			gCDA.Go(func() error {
+				return mc.loadCDAEntries(gCDACtx, spaceModel, 0, logger)
+			})
+		}
 		if !mc.skipAssets {
 			gCDA.Go(func() error {
 				return mc.loadCDAAssets(gCDACtx, spaceModel, logger)
@@ -191,14 +196,16 @@ func (mc *MigrationClient) UpdateSpaceModel(ctx context.Context, logger *Logger)
 	var updatedEntries map[string]*EntryEntity
 	var updatedAssets map[string]*AssetEntity
 	g, gCtx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		entries, err := mc.updateEntries(gCtx, cutoff, logger)
-		if err != nil {
-			return err
-		}
-		updatedEntries = entries
-		return nil
-	})
+	if !mc.skipEntries {
+		g.Go(func() error {
+			entries, err := mc.updateEntries(gCtx, cutoff, logger)
+			if err != nil {
+				return err
+			}
+			updatedEntries = entries
+			return nil
+		})
+	}
 	if !mc.skipAssets {
 		g.Go(func() error {
 			assets, err := mc.updateAssets(gCtx, cutoff, logger)
@@ -218,14 +225,16 @@ func (mc *MigrationClient) UpdateSpaceModel(ctx context.Context, logger *Logger)
 	var updatedCDAAssets map[string]Entity
 	if mc.cda != nil {
 		gCDA, gCDACtx := errgroup.WithContext(ctx)
-		gCDA.Go(func() error {
-			entries, err := mc.updateCDAEntries(gCDACtx, cutoff, logger)
-			if err != nil {
-				return err
-			}
-			updatedCDAEntries = entries
-			return nil
-		})
+		if !mc.skipEntries {
+			gCDA.Go(func() error {
+				entries, err := mc.updateCDAEntries(gCDACtx, cutoff, logger)
+				if err != nil {
+					return err
+				}
+				updatedCDAEntries = entries
+				return nil
+			})
+		}
 		if !mc.skipAssets {
 			gCDA.Go(func() error {
 				assets, err := mc.updateCDAAssets(gCDACtx, cutoff, logger)

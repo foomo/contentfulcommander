@@ -29,7 +29,7 @@ A Go library for Contentful migrations that provides a high-level interface for 
 - **Basic RichText Markdown Conversion**: Convert supported Contentful RichText documents to/from a safe Markdown subset
 - **Incremental Cache Updates**: Efficiently refresh only recently changed entities using `UpdateSpaceModel`, ordered by `-sys.updatedAt`
 - **Concurrent Loading**: Parallel loading of entries and assets for faster space initialization, with adaptive per-content-type entry page sizes
-- **Selective Loading**: Skip asset loading with `SkipAssets` to save time and bandwidth when only entries are needed
+- **Selective Loading**: Load entries only (`SkipAssets`) or assets only (`SkipEntries`) to save time and bandwidth
 - **Configuration Management**: Load configuration from environment variables
 - **Portable Design**: Only depends on `github.com/foomo/contentful` and standard library
 
@@ -963,6 +963,7 @@ config := &commanderclient.Config{
     Environment: "master",
     Verbose:     true,
     SkipAssets:  false, // set true to skip loading assets entirely
+    SkipEntries: false, // set true to skip loading entries entirely
 }
 
 // Initialize ready-to-use client with logger and loaded space model
@@ -982,6 +983,13 @@ Environment variables:
 
 Code-only config options (not loaded from env):
 - `Config.SkipAssets`: Skip loading assets to save time and bandwidth when only entries are needed
+- `Config.SkipEntries`: Skip loading entries when only assets are needed
+
+Both flags apply to `LoadSpaceModel` and `UpdateSpaceModel`, and to the CDA view phase when a CDA key is
+configured. Locales and content types are always loaded. With only one entity kind in the cache, lookups
+that cross the boundary return nothing — `GetParents`/`GetReferrerPath` on an asset finds no referring
+entries when `SkipEntries` is set, and entry reference resolution finds no linked assets when `SkipAssets`
+is set. Setting both flags loads locales and content types only.
 
 ## Example Usage
 
@@ -1074,7 +1082,7 @@ log.Printf("Processed %d entities with %d errors",
 - The library loads entire space models into memory for efficient operations
 - **Incremental updates**: Use `UpdateSpaceModel` instead of `LoadSpaceModel` to refresh only recently changed entities — significantly faster for large spaces with infrequent changes
 - **Concurrent loading**: Entries and assets are loaded in parallel for faster initialization. Initial entry loading is split by content type, starts with 1000-entry pages, and halves the page size only for content types that hit Contentful response-size limits. When a CDA key is provided, CDA views are loaded in a second concurrent phase after CMA data
-- **Skip assets**: Set `Config.SkipAssets = true` to skip asset loading entirely — useful for entry-only migrations where assets are irrelevant
+- **Skip assets or entries**: Set `Config.SkipAssets = true` for entry-only migrations, or `Config.SkipEntries = true` for asset-only migrations — each skips the other kind's CMA and CDA load entirely
 - **Concurrent batch execution**: `ExecuteBatch` runs operations concurrently (default: 3 parallel API calls, configurable via `client.SetConcurrency(n)`)
 - Use appropriate batch sizes for large operations
 - Consider using dry-run mode for testing
