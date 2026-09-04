@@ -48,6 +48,8 @@ Single library package (`commanderclient/`) with a thin CLI entry point (`main.g
 
 - **`MigrationExecutor`** (`executor.go`) — runs `MigrationOperation` batches with configurable concurrency, dry-run mode, and per-operation confirmation. Update operations preserve publishing status.
 
+- **Asset creation** (`assets.go`) — `CreateAssetFromURL()` and `CreateAssetFromURLAndPublish()` wrap the CMA upsert → process → poll cycle for assets Contentful fetches from a remote URL. The file name is derived from the URL (falling back to the asset ID), a title is required (the SDK's `Assets.Process` only processes locales that have one), and the processing wait is bounded by the context with a 2-minute default. Creating over an existing ID is an error, not an overwrite.
+
 ### Translation subsystem
 
 - **`DeepLTranslator`** (`translate.go`, `deepl.go`) — translates entity fields via DeepL API v2. Handles both simple strings and RichText (extracts text nodes, translates, reassembles). Tracks billed characters.
