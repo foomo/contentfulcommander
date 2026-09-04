@@ -14,7 +14,10 @@ type Config struct {
 	SpaceID     string
 	Environment string
 	Verbose     bool
-	SkipAssets  bool
+	// SkipAssets skips loading assets — the space model holds entries only.
+	SkipAssets bool
+	// SkipEntries skips loading entries — the space model holds assets only.
+	SkipEntries bool
 }
 
 // LoadConfigFromEnv loads configuration from environment variables
@@ -48,9 +51,14 @@ func Init(config *Config) (*MigrationClient, *Logger, error) {
 	// Create client
 	client := newMigrationClient(config.CMAToken, config.CDAToken, config.SpaceID, config.Environment)
 	client.skipAssets = config.SkipAssets
+	client.skipEntries = config.SkipEntries
 
 	// Create logger
 	logger := NewLogger(config.Verbose)
+
+	if config.SkipAssets && config.SkipEntries {
+		logger.Warn("Both SkipAssets and SkipEntries are set: only locales and content types will be loaded")
+	}
 
 	if config.Verbose {
 		logger.Info("Created migration client for space %s in environment %s", config.SpaceID, config.Environment)
