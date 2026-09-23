@@ -6,6 +6,9 @@ import (
 	"strings"
 )
 
+// markdownWhitespace matches the characters of the RE2 \s class used by the line patterns.
+const markdownWhitespace = " \t\n\f\r"
+
 var (
 	markdownHeadingPattern       = regexp.MustCompile(`^(#{1,6})\s+(.+)$`)
 	markdownUnorderedListPattern = regexp.MustCompile(`^(\s*)[-+*]\s+(.+)$`)
@@ -106,6 +109,7 @@ func markdownToRichTextBlocks(markdown string) ([]*RichTextNode, error) {
 				NodeType: listType,
 				Data:     map[string]any{},
 			}
+			var itemTexts []string
 			for ; i < len(lines); i++ {
 				currentLine := lines[i]
 				if strings.TrimSpace(currentLine) == "" {
@@ -115,11 +119,22 @@ func markdownToRichTextBlocks(markdown string) ([]*RichTextNode, error) {
 				if currentErr != nil {
 					return nil, currentErr
 				}
-				if !currentOK || currentListType != listType {
+				if currentOK && currentListType == listType {
+					itemTexts = append(itemTexts, currentItemText)
+					continue
+				}
+				if currentOK || markdownHeadingPattern.MatchString(currentLine) || isTableStart(lines, i) {
 					i--
 					break
 				}
-				content, err := markdownInlineToRichText(currentItemText)
+				// Lazy continuation line: part of the previous item's paragraph.
+				if err := validateMarkdownLine(currentLine); err != nil {
+					return nil, err
+				}
+				itemTexts[len(itemTexts)-1] += "\n" + currentLine
+			}
+			for _, itemText := range itemTexts {
+				content, err := markdownInlineToRichText(itemText)
 				if err != nil {
 					return nil, err
 				}
@@ -561,10 +576,15 @@ func richTextBlockToMarkdown(node *RichTextNode) (string, []string) {
 
 	switch node.NodeType {
 	case nodeTypeParagraph:
-		return richTextInlineToMarkdown(node.Content)
+		text, warnings := richTextInlineToMarkdown(node.Content)
+		return escapeMarkdownListMarkers(text), warnings
 	case nodeTypeHeading1, nodeTypeHeading2, nodeTypeHeading3:
 		level := strings.TrimPrefix(node.NodeType, "heading-")
 		text, warnings := richTextInlineToMarkdown(node.Content)
+		if strings.Contains(text, "\n") {
+			text = strings.ReplaceAll(text, "\n", " ")
+			warnings = append(warnings, fmt.Sprintf("line break in %q node rendered as a space", node.NodeType))
+		}
 		return strings.Repeat("#", int(level[0]-'0')) + " " + text, warnings
 	case nodeTypeHeading4, nodeTypeHeading5, nodeTypeHeading6:
 		text, warnings := richTextInlineToMarkdown(node.Content)
@@ -606,6 +626,10 @@ func richTextListToMarkdown(node *RichTextNode, ordered bool) (string, []string)
 		itemNumber++
 		itemText, childWarnings := richTextListItemToMarkdown(child)
 		warnings = append(warnings, childWarnings...)
+		// Continuation lines re-parse as part of the item, so only they need list markers escaped.
+		if first, rest, ok := strings.Cut(itemText, "\n"); ok {
+			itemText = first + "\n" + escapeMarkdownListMarkers(rest)
+		}
 		prefix := "- "
 		if ordered {
 			prefix = fmt.Sprintf("%d. ", itemNumber)
@@ -781,15 +805,23 @@ func richTextInlineNodeToMarkdown(node *RichTextNode) (string, []string) {
 				warnings = append(warnings, fmt.Sprintf("unsupported RichText mark %q ignored", mark.Type))
 			}
 		}
+		marker := ""
 		switch {
 		case hasBold && hasItalic:
-			text = "***" + text + "***"
+			marker = "***"
 		case hasBold:
-			text = "**" + text + "**"
+			marker = "**"
 		case hasItalic:
-			text = "*" + text + "*"
+			marker = "*"
 		}
-		return text, warnings
+		// Edge whitespace stays outside the markers: "* foo*" would parse as a list item,
+		// and empty or whitespace-only marked text has nothing to mark.
+		core := strings.Trim(text, markdownWhitespace)
+		if marker == "" || core == "" {
+			return text, warnings
+		}
+		start := strings.Index(text, core)
+		return text[:start] + marker + core + marker + text[start+len(core):], warnings
 	case nodeTypeHyperlink, nodeTypeEntryHyperlink, nodeTypeAssetHyperlink:
 		return richTextHyperlinkToMarkdown(node)
 	default:
@@ -844,6 +876,24 @@ func escapeMarkdownText(text string) string {
 	return replacer.Replace(text)
 }
 
+// escapeMarkdownListMarkers escapes paragraph lines that would otherwise parse as
+// list items ("- x", "+ x", "1. x"); reversed by unescapeMarkdownText. "*" and ")"
+// are already escaped by escapeMarkdownText.
+func escapeMarkdownListMarkers(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		indent := len(line) - len(strings.TrimLeft(line, markdownWhitespace))
+		switch {
+		case markdownUnorderedListPattern.MatchString(line):
+			lines[i] = line[:indent] + `\` + line[indent:]
+		case markdownOrderedListPattern.MatchString(line):
+			dot := indent + strings.IndexAny(line[indent:], ".)")
+			lines[i] = line[:dot] + `\` + line[dot:]
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 // escapeMarkdownURL escapes only the characters that would break the (...) of a
 // Markdown link target; reversed by unescapeMarkdownText.
 func escapeMarkdownURL(url string) string {
@@ -876,7 +926,7 @@ func unescapeMarkdownText(text string) string {
 
 func isMarkdownEscapable(c byte) bool {
 	switch c {
-	case '\\', '*', '_', '[', ']', '(', ')', '#':
+	case '\\', '*', '_', '[', ']', '(', ')', '#', '-', '+', '.':
 		return true
 	default:
 		return false
