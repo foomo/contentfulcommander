@@ -1,6 +1,8 @@
 package commanderclient
 
 import (
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -48,6 +50,10 @@ func TestIsSupportedRichTextMarkdownRejectsUnsupportedConstructs(t *testing.T) {
 		{name: "blockquote", markdown: "> Quote"},
 		{name: "nested list", markdown: "- One\n  - Two"},
 		{name: "horizontal rule", markdown: "---"},
+		{name: "tilde code block", markdown: "~~~\ncode\n~~~"},
+		{name: "code after escaped backtick", markdown: "\\` then `code`"},
+		{name: "HTML after escaped angle bracket", markdown: "\\<a <b>bold</b>"},
+		{name: "blockquote after escaped one", markdown: "\\> fine\n\n> Quote"},
 	}
 
 	for _, tt := range tests {
@@ -570,4 +576,140 @@ func findTextNode(nodes []*RichTextNode, value string) *RichTextNode {
 		}
 	}
 	return nil
+}
+
+// assertRichTextRoundTrip renders doc to Markdown, parses it back and requires the
+// rebuilt document to equal the source in both text and block structure.
+func assertRichTextRoundTrip(t *testing.T, doc *RichTextNode) {
+	t.Helper()
+	markdown, warnings, err := RichTextToMarkdown(doc)
+	if err != nil {
+		t.Fatalf("RichTextToMarkdown returned error: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %#v", warnings)
+	}
+	value, err := MarkdownToRichText(markdown)
+	if err != nil {
+		t.Fatalf("MarkdownToRichText(%q) returned error: %v", markdown, err)
+	}
+	if !reflect.DeepEqual(value, doc) {
+		want, err := json.Marshal(doc)
+		if err != nil {
+			t.Fatalf("marshal source document: %v", err)
+		}
+		got, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("marshal rebuilt document: %v", err)
+		}
+		t.Fatalf("round trip mismatch via markdown %q:\nwant %s\n got %s", markdown, want, got)
+	}
+}
+
+func richTextTextNode(value string) *RichTextNode {
+	return &RichTextNode{NodeType: nodeTypeText, Value: value, Data: map[string]any{}, Marks: []RichTextMark{}}
+}
+
+func TestRichTextMarkdownParagraphRoundTrip(t *testing.T) {
+	texts := []string{
+		// Previously rejected on the way back.
+		"> Zitat aus der Presse",
+		"Rabatt `10%` heute",
+		"Größe <XL> verfügbar",
+		// Previously working, kept as contrast.
+		"Preise < 50 Franken",
+		"100% Wolle",
+		"Preis: 20.50 statt 30.00",
+		"1) Erstens",
+		"* Stern",
+		"[Kein Link",
+		`Pfad C:\Ordner`,
+		`2026\. schon escaped`,
+		"2026. Neue Kollektion",
+		"- Sale",
+		// Same class: line-level block syntax inside text.
+		">",
+		"  > eingerückt",
+		"Erste Zeile\n> zweite Zeile",
+		"```",
+		"~~~ Wellen",
+		"---",
+		"a | b\n--- | ---",
+		"Spalte | Wert\n:-: | -",
+		"<b>fett</b> und <br/>",
+		"a <b und c> d",
+		"Mix `a` <X> > y",
+		`\` + "`",
+	}
+
+	for _, text := range texts {
+		t.Run(text, func(t *testing.T) {
+			assertRichTextRoundTrip(t, &RichTextNode{
+				NodeType: nodeTypeDocument,
+				Data:     map[string]any{},
+				Content: []*RichTextNode{{
+					NodeType: nodeTypeParagraph,
+					Data:     map[string]any{},
+					Content:  []*RichTextNode{richTextTextNode(text)},
+				}},
+			})
+		})
+	}
+}
+
+func TestRichTextMarkdownSyntaxInOtherBlocksRoundTrip(t *testing.T) {
+	paragraph := func(text string) *RichTextNode {
+		return &RichTextNode{NodeType: nodeTypeParagraph, Data: map[string]any{}, Content: []*RichTextNode{richTextTextNode(text)}}
+	}
+	tests := []struct {
+		name  string
+		block *RichTextNode
+	}{
+		{name: "list item continuation blockquote", block: &RichTextNode{
+			NodeType: nodeTypeUnorderedList,
+			Data:     map[string]any{},
+			Content: []*RichTextNode{{
+				NodeType: nodeTypeListItem,
+				Data:     map[string]any{},
+				Content:  []*RichTextNode{paragraph("a\n> b\n---")},
+			}},
+		}},
+		{name: "heading", block: &RichTextNode{
+			NodeType: nodeTypeHeading2,
+			Data:     map[string]any{},
+			Content:  []*RichTextNode{richTextTextNode("> `Code` <XL>")},
+		}},
+		{name: "table cell", block: &RichTextNode{
+			NodeType: nodeTypeTable,
+			Data:     map[string]any{},
+			Content: []*RichTextNode{{
+				NodeType: nodeTypeTableRow,
+				Data:     map[string]any{},
+				Content: []*RichTextNode{{
+					NodeType: nodeTypeTableHeaderCell,
+					Data:     map[string]any{},
+					Content:  []*RichTextNode{paragraph("> `Code` <XL>")},
+				}},
+			}},
+		}},
+		{name: "hyperlink uri", block: &RichTextNode{
+			NodeType: nodeTypeParagraph,
+			Data:     map[string]any{},
+			Content: []*RichTextNode{{
+				NodeType: nodeTypeHyperlink,
+				Data:     map[string]any{"uri": "https://example.com/?q=<a>&c=`x`"},
+				Content:  []*RichTextNode{richTextTextNode("Link")},
+			}},
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRichTextRoundTrip(t, &RichTextNode{
+				NodeType: nodeTypeDocument,
+				Data:     map[string]any{},
+				Content:  []*RichTextNode{tt.block},
+			})
+		})
+	}
 }

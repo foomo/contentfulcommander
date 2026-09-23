@@ -63,13 +63,13 @@ func markdownToRichTextBlocks(markdown string) ([]*RichTextNode, error) {
 	if strings.TrimSpace(markdown) == "" {
 		return []*RichTextNode{}, nil
 	}
-	if markdownHTMLPattern.MatchString(markdown) {
+	if containsUnescapedMatch(markdown, markdownHTMLPattern) {
 		return nil, fmt.Errorf("raw HTML is not supported in RichText Markdown")
 	}
 	if markdownImagePattern.MatchString(markdown) {
 		return nil, fmt.Errorf("images are not supported in RichText Markdown")
 	}
-	if strings.Contains(markdown, "`") {
+	if indexUnescaped(markdown, "`") != -1 {
 		return nil, fmt.Errorf("code spans and code blocks are not supported in RichText Markdown")
 	}
 
@@ -451,6 +451,24 @@ func indexUnescaped(s, marker string) int {
 	}
 }
 
+// containsUnescapedMatch reports whether pattern matches s at a position whose first
+// byte is not backslash-escaped. Matches are retried one byte later so an escaped
+// match cannot hide an unescaped one it overlaps.
+func containsUnescapedMatch(s string, pattern *regexp.Regexp) bool {
+	for from := 0; from < len(s); {
+		loc := pattern.FindStringIndex(s[from:])
+		if loc == nil {
+			return false
+		}
+		start := from + loc[0]
+		if !isEscapedAt(s, start) {
+			return true
+		}
+		from = start + 1
+	}
+	return false
+}
+
 // isEscapedAt reports whether the byte at pos is preceded by an odd number of backslashes.
 func isEscapedAt(s string, pos int) bool {
 	backslashes := 0
@@ -577,7 +595,7 @@ func richTextBlockToMarkdown(node *RichTextNode) (string, []string) {
 	switch node.NodeType {
 	case nodeTypeParagraph:
 		text, warnings := richTextInlineToMarkdown(node.Content)
-		return escapeMarkdownListMarkers(text), warnings
+		return escapeMarkdownLineSyntax(text), warnings
 	case nodeTypeHeading1, nodeTypeHeading2, nodeTypeHeading3:
 		level := strings.TrimPrefix(node.NodeType, "heading-")
 		text, warnings := richTextInlineToMarkdown(node.Content)
@@ -589,7 +607,7 @@ func richTextBlockToMarkdown(node *RichTextNode) (string, []string) {
 	case nodeTypeHeading4, nodeTypeHeading5, nodeTypeHeading6:
 		text, warnings := richTextInlineToMarkdown(node.Content)
 		warnings = append(warnings, fmt.Sprintf("unsupported RichText node %q rendered as plain text", node.NodeType))
-		return text, warnings
+		return escapeMarkdownLineSyntax(text), warnings
 	case nodeTypeUnorderedList:
 		return richTextListToMarkdown(node, false)
 	case nodeTypeOrderedList:
@@ -601,7 +619,7 @@ func richTextBlockToMarkdown(node *RichTextNode) (string, []string) {
 	default:
 		text, warnings := richTextInlineToMarkdown(node.Content)
 		warnings = append(warnings, fmt.Sprintf("unsupported RichText node %q rendered as plain text where possible", node.NodeType))
-		return text, warnings
+		return escapeMarkdownLineSyntax(text), warnings
 	}
 }
 
@@ -626,9 +644,9 @@ func richTextListToMarkdown(node *RichTextNode, ordered bool) (string, []string)
 		itemNumber++
 		itemText, childWarnings := richTextListItemToMarkdown(child)
 		warnings = append(warnings, childWarnings...)
-		// Continuation lines re-parse as part of the item, so only they need list markers escaped.
+		// Continuation lines re-parse as part of the item, so only they need line syntax escaped.
 		if first, rest, ok := strings.Cut(itemText, "\n"); ok {
-			itemText = first + "\n" + escapeMarkdownListMarkers(rest)
+			itemText = first + "\n" + escapeMarkdownLineSyntax(rest)
 		}
 		prefix := "- "
 		if ordered {
@@ -872,35 +890,47 @@ func escapeMarkdownText(text string) string {
 		`(`, `\(`,
 		`)`, `\)`,
 		`#`, `\#`,
+		"`", "\\`",
+		`<`, `\<`,
 	)
 	return replacer.Replace(text)
 }
 
-// escapeMarkdownListMarkers escapes paragraph lines that would otherwise parse as
-// list items ("- x", "+ x", "1. x"); reversed by unescapeMarkdownText. "*" and ")"
-// are already escaped by escapeMarkdownText.
-func escapeMarkdownListMarkers(text string) string {
+// escapeMarkdownLineSyntax escapes lines of rendered inline text that would otherwise
+// parse as block syntax: list items ("- x", "+ x", "1. x"), blockquotes ("> x"),
+// tilde code fences ("~~~") and table dividers ("---", "--- | ---"); reversed by
+// unescapeMarkdownText. Headings, backtick fences and "*"/"_" rules are already
+// covered by escapeMarkdownText.
+func escapeMarkdownLineSyntax(text string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		indent := len(line) - len(strings.TrimLeft(line, markdownWhitespace))
+		trimmed := line[indent:]
 		switch {
-		case markdownUnorderedListPattern.MatchString(line):
-			lines[i] = line[:indent] + `\` + line[indent:]
+		case markdownUnorderedListPattern.MatchString(line),
+			strings.HasPrefix(trimmed, ">"),
+			strings.HasPrefix(trimmed, "~~~"):
+			lines[i] = line[:indent] + `\` + trimmed
 		case markdownOrderedListPattern.MatchString(line):
-			dot := indent + strings.IndexAny(line[indent:], ".)")
+			dot := indent + strings.IndexAny(trimmed, ".)")
 			lines[i] = line[:dot] + `\` + line[dot:]
+		case isTableDivider(line):
+			dash := strings.IndexByte(line, '-')
+			lines[i] = line[:dash] + `\` + line[dash:]
 		}
 	}
 	return strings.Join(lines, "\n")
 }
 
 // escapeMarkdownURL escapes only the characters that would break the (...) of a
-// Markdown link target; reversed by unescapeMarkdownText.
+// Markdown link target or trip the code/HTML guards; reversed by unescapeMarkdownText.
 func escapeMarkdownURL(url string) string {
 	replacer := strings.NewReplacer(
 		`\`, `\\`,
 		`(`, `\(`,
 		`)`, `\)`,
+		"`", "\\`",
+		`<`, `\<`,
 	)
 	return replacer.Replace(url)
 }
@@ -926,7 +956,7 @@ func unescapeMarkdownText(text string) string {
 
 func isMarkdownEscapable(c byte) bool {
 	switch c {
-	case '\\', '*', '_', '[', ']', '(', ')', '#', '-', '+', '.':
+	case '\\', '*', '_', '[', ']', '(', ')', '#', '-', '+', '.', '`', '<', '>', '~':
 		return true
 	default:
 		return false
