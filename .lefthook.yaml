@@ -15,11 +15,11 @@ pre-commit:
         fi
     golangci-fmt:
       glob: "*.go"
-      run: golangci-lint fmt {staged_files}
+      run: mise exec -- golangci-lint fmt {staged_files}
       stage_fixed: true
     golangci-lint:
       glob: "*.go"
-      run: golangci-lint run --new --fast-only
+      run: mise exec -- golangci-lint run --new --fast-only
       stage_fixed: false
 
 commit-msg:

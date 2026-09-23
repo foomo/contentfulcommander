@@ -43,13 +43,13 @@ tidy:
 ## Run linter
 lint:
 	@echo "〉golangci-lint run"
-	@golangci-lint run
+	@mise exec -- golangci-lint run
 
 .PHONY: lint.fix
 ## Run golangci-lint & fix
 lint.fix:
 	@echo "〉golangci-lint run fix"
-	@golangci-lint run --fix
+	@mise exec -- golangci-lint run --fix
 
 .PHONY: generate
 ## Run go generate

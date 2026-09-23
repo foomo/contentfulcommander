@@ -196,6 +196,13 @@ func TestRichTextMarkdownEscapedTextRoundTrip(t *testing.T) {
 		"a_b",
 		`back\slash`,
 		"asterisk * and brackets [x]",
+		"- not a list",
+		"+ not a list",
+		"1. not a list",
+		"2) not a list",
+		"  - indented dash",
+		"line one\n10. line two",
+		"3.14 is pi",
 	}
 
 	for _, original := range values {
@@ -218,6 +225,9 @@ func TestRichTextMarkdownEscapedTextRoundTrip(t *testing.T) {
 			t.Fatalf("MarkdownToRichText(%q) returned error: %v", markdown, err)
 		}
 		node := value.(*RichTextNode)
+		if len(node.Content) != 1 || node.Content[0].NodeType != nodeTypeParagraph {
+			t.Fatalf("expected a single paragraph for %q (markdown %q), got %#v", original, markdown, node.Content)
+		}
 		got := node.Content[0].Content[0].Value
 		if got != original {
 			t.Fatalf("round trip mismatch: original %q -> markdown %q -> %q", original, markdown, got)
@@ -401,4 +411,163 @@ func TestRichTextTableReadNoHeaderRowWarns(t *testing.T) {
 	if !warningsContain(warnings, "first row used as the Markdown header") {
 		t.Fatalf("expected no-header warning, got %#v", warnings)
 	}
+}
+
+func TestRichTextMarkdownMarkedWhitespaceRoundTrip(t *testing.T) {
+	tests := []struct {
+		name  string
+		nodes []*RichTextNode
+	}{
+		{name: "italic leading space", nodes: []*RichTextNode{
+			{NodeType: nodeTypeText, Value: " foo", Data: map[string]any{}, Marks: []RichTextMark{{Type: markTypeItalic}}},
+		}},
+		{name: "bold trailing space", nodes: []*RichTextNode{
+			{NodeType: nodeTypeText, Value: "foo ", Data: map[string]any{}, Marks: []RichTextMark{{Type: markTypeBold}}},
+			{NodeType: nodeTypeText, Value: "bar", Data: map[string]any{}},
+		}},
+		{name: "italic whitespace only", nodes: []*RichTextNode{
+			{NodeType: nodeTypeText, Value: " ", Data: map[string]any{}, Marks: []RichTextMark{{Type: markTypeItalic}}},
+			{NodeType: nodeTypeText, Value: "x", Data: map[string]any{}},
+		}},
+		{name: "empty bold", nodes: []*RichTextNode{
+			{NodeType: nodeTypeText, Value: "", Data: map[string]any{}, Marks: []RichTextMark{{Type: markTypeBold}}},
+			{NodeType: nodeTypeText, Value: "x", Data: map[string]any{}},
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc := &RichTextNode{
+				NodeType: nodeTypeDocument,
+				Data:     map[string]any{},
+				Content:  []*RichTextNode{{NodeType: nodeTypeParagraph, Data: map[string]any{}, Content: tt.nodes}},
+			}
+			var want strings.Builder
+			for _, n := range tt.nodes {
+				want.WriteString(n.Value)
+			}
+
+			markdown, _, err := RichTextToMarkdown(doc)
+			if err != nil {
+				t.Fatalf("RichTextToMarkdown returned error: %v", err)
+			}
+			value, err := MarkdownToRichText(markdown)
+			if err != nil {
+				t.Fatalf("MarkdownToRichText(%q) returned error: %v", markdown, err)
+			}
+			node := value.(*RichTextNode)
+			if len(node.Content) != 1 || node.Content[0].NodeType != nodeTypeParagraph {
+				t.Fatalf("expected a single paragraph for markdown %q, got %#v", markdown, node.Content)
+			}
+			var got strings.Builder
+			for _, n := range node.Content[0].Content {
+				got.WriteString(n.Value)
+			}
+			// The marked text itself (without its edge whitespace) must keep its marks.
+			if core := strings.TrimSpace(tt.nodes[0].Value); core != "" {
+				if first := findTextNode(node.Content[0].Content, core); first == nil || len(first.Marks) != len(tt.nodes[0].Marks) {
+					t.Fatalf("marks lost on %q (markdown %q): %#v", core, markdown, first)
+				}
+			}
+			if got.String() != want.String() {
+				t.Fatalf("round trip mismatch: want %q -> markdown %q -> %q", want.String(), markdown, got.String())
+			}
+		})
+	}
+}
+
+func TestRichTextMarkdownListItemNewlineRoundTrip(t *testing.T) {
+	values := []string{
+		"a\nb",
+		"a\n- b",
+		"a\n1. b",
+		"a\n# b",
+	}
+
+	for _, original := range values {
+		doc := &RichTextNode{
+			NodeType: nodeTypeDocument,
+			Data:     map[string]any{},
+			Content: []*RichTextNode{{
+				NodeType: nodeTypeUnorderedList,
+				Data:     map[string]any{},
+				Content: []*RichTextNode{{
+					NodeType: nodeTypeListItem,
+					Data:     map[string]any{},
+					Content: []*RichTextNode{{
+						NodeType: nodeTypeParagraph,
+						Data:     map[string]any{},
+						Content:  []*RichTextNode{{NodeType: nodeTypeText, Value: original, Data: map[string]any{}}},
+					}},
+				}},
+			}},
+		}
+
+		markdown, _, err := RichTextToMarkdown(doc)
+		if err != nil {
+			t.Fatalf("RichTextToMarkdown(%q) returned error: %v", original, err)
+		}
+		value, err := MarkdownToRichText(markdown)
+		if err != nil {
+			t.Fatalf("MarkdownToRichText(%q) returned error: %v", markdown, err)
+		}
+		node := value.(*RichTextNode)
+		if len(node.Content) != 1 || node.Content[0].NodeType != nodeTypeUnorderedList || len(node.Content[0].Content) != 1 {
+			t.Fatalf("expected a single one-item list for %q (markdown %q), got %#v", original, markdown, node.Content)
+		}
+		got := node.Content[0].Content[0].Content[0].Content[0].Value
+		if got != original {
+			t.Fatalf("round trip mismatch: original %q -> markdown %q -> %q", original, markdown, got)
+		}
+	}
+}
+
+func TestMarkdownToRichTextListLazyContinuation(t *testing.T) {
+	value, err := MarkdownToRichText("- one\ncontinued\n- two\n\nafter")
+	if err != nil {
+		t.Fatalf("MarkdownToRichText returned error: %v", err)
+	}
+	node := value.(*RichTextNode)
+	if len(node.Content) != 2 || node.Content[0].NodeType != nodeTypeUnorderedList || node.Content[1].NodeType != nodeTypeParagraph {
+		t.Fatalf("expected list then paragraph, got %#v", node.Content)
+	}
+	items := node.Content[0].Content
+	if len(items) != 2 {
+		t.Fatalf("expected two list items, got %d", len(items))
+	}
+	if got := items[0].Content[0].Content[0].Value; got != "one\ncontinued" {
+		t.Fatalf("expected continuation joined into first item, got %q", got)
+	}
+}
+
+func TestRichTextToMarkdownHeadingNewlineWarns(t *testing.T) {
+	doc := &RichTextNode{
+		NodeType: nodeTypeDocument,
+		Data:     map[string]any{},
+		Content: []*RichTextNode{{
+			NodeType: nodeTypeHeading2,
+			Data:     map[string]any{},
+			Content:  []*RichTextNode{{NodeType: nodeTypeText, Value: "Title\nsubtitle", Data: map[string]any{}}},
+		}},
+	}
+
+	markdown, warnings, err := RichTextToMarkdown(doc)
+	if err != nil {
+		t.Fatalf("RichTextToMarkdown returned error: %v", err)
+	}
+	if markdown != "## Title subtitle" {
+		t.Fatalf("expected newline collapsed to a space, got %q", markdown)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("expected one newline warning, got %#v", warnings)
+	}
+}
+
+func findTextNode(nodes []*RichTextNode, value string) *RichTextNode {
+	for _, n := range nodes {
+		if n.Value == value {
+			return n
+		}
+	}
+	return nil
 }
