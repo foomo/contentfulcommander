@@ -532,6 +532,16 @@ Tables convert to and from [GitHub-Flavored Markdown](https://github.github.com/
 
 The first row is the header row, and cells hold inline content (text, bold/italic, links). Because GFM tables cannot represent everything Contentful tables can, content that does not fit is degraded with a `warnings` entry on read: block content inside a cell (lists, multiple paragraphs) is flattened to text, header cells outside the first row become regular cells, a table with no header row uses its first row as the header, and ragged rows are padded to the column count.
 
+### Escaping
+
+Text that happens to look like Markdown syntax is backslash-escaped on read, so `RichTextToMarkdown` followed by `MarkdownToRichText` reproduces the original text and block structure:
+
+- Everywhere in text: `` \ * _ [ ] ( ) # ` < ``
+- At the start of a line: list markers (`- `, `+ `, `1. `), blockquotes (`>`), tilde fences (`~~~`) and table dividers (`---`, `--- | ---`), e.g. `2026\. Neue Kollektion`, `\- Sale`, `\> Zitat`
+- In link targets: `` \ ( ) ` < ``
+
+On write, a backslash before any of `` \ * _ [ ] ( ) # - + . ` < > ~ `` produces the literal character. Escaped occurrences never count as unsupported syntax: `Rabatt \`10%\`` is plain text, while an unescaped `` `10%` `` is still rejected as a code span.
+
 Unsupported Markdown is rejected on write so callers do not accidentally persist lossy RichText. Unsupported RichText nodes encountered while reading are rendered as plain text where possible and reported in `warnings`. Unsupported constructs include embedded entries, embedded assets, images, arbitrary custom nodes, raw HTML, code spans, code blocks, blockquotes, and horizontal rules.
 
 ## Locale Support
