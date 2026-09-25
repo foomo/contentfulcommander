@@ -864,6 +864,40 @@ func TestPublishingStatus(t *testing.T) {
 	}
 }
 
+func TestIsPublishedAgreesWithPublishingStatus(t *testing.T) {
+	cases := []struct {
+		name             string
+		version          int
+		publishedVersion int
+		published        bool
+		status           string
+	}{
+		{name: "never-edited draft", version: 1, publishedVersion: 0, published: false, status: StatusDraft},
+		{name: "published", version: 5, publishedVersion: 4, published: true, status: StatusPublished},
+		{name: "changed", version: 6, publishedVersion: 4, published: false, status: StatusChanged},
+	}
+
+	for _, tc := range cases {
+		newSys := func() *contentful.Sys {
+			return &contentful.Sys{ID: "id", Version: tc.version, PublishedVersion: tc.publishedVersion}
+		}
+		entities := []Entity{
+			&EntryEntity{Entry: &contentful.Entry{Sys: newSys()}},
+			&AssetEntity{Asset: &contentful.Asset{Sys: newSys()}},
+		}
+		for _, entity := range entities {
+			t.Run(entity.GetType()+"/"+tc.name, func(t *testing.T) {
+				if got := entity.IsPublished(); got != tc.published {
+					t.Errorf("Expected IsPublished() %v for version %d/published %d, got %v", tc.published, tc.version, tc.publishedVersion, got)
+				}
+				if got := entity.GetPublishingStatus(); got != tc.status {
+					t.Errorf("Expected publishing status '%s', got '%s'", tc.status, got)
+				}
+			})
+		}
+	}
+}
+
 func TestCDAView(t *testing.T) {
 	t.Run("entry with CDA view", func(t *testing.T) {
 		cdaEntry := &EntryEntity{

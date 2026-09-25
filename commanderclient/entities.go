@@ -166,7 +166,7 @@ func (ee *EntryEntity) GetVersion() int {
 }
 
 func (ee *EntryEntity) IsPublished() bool {
-	return ee.Entry.Sys.Version-ee.Entry.Sys.PublishedVersion == 1
+	return ee.Entry.Sys.PublishedVersion > 0 && ee.Entry.Sys.Version-ee.Entry.Sys.PublishedVersion == 1
 }
 
 func (ee *EntryEntity) GetPublishingStatus() string {
@@ -512,7 +512,7 @@ func (ae *AssetEntity) GetVersion() int {
 }
 
 func (ae *AssetEntity) IsPublished() bool {
-	return ae.Asset.Sys.Version-ae.Asset.Sys.PublishedVersion == 1
+	return ae.Asset.Sys.PublishedVersion > 0 && ae.Asset.Sys.Version-ae.Asset.Sys.PublishedVersion == 1
 }
 
 func (ae *AssetEntity) GetPublishingStatus() string {
