@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"reflect"
@@ -23,6 +24,7 @@ type MigrationClient struct {
 	spaceModel  *SpaceModel
 	cache       map[string]Entity
 	cacheMu     sync.RWMutex
+	refIndex    *referenceIndex // built lazily on the first reverse query; guarded by cacheMu
 	updateMu    sync.Mutex
 	stats       *MigrationStats
 	concurrency int
@@ -166,6 +168,7 @@ func (mc *MigrationClient) LoadSpaceModel(ctx context.Context, logger *Logger) e
 	mc.cacheMu.Lock()
 	mc.spaceModel = spaceModel
 	mc.cache = newCache
+	mc.refIndex = nil // rebuilt from the new cache by the next reverse query
 	mc.stats.TotalEntities = len(newCache)
 	mc.cacheMu.Unlock()
 
@@ -176,6 +179,12 @@ func (mc *MigrationClient) LoadSpaceModel(ctx context.Context, logger *Logger) e
 // only entities that have changed since the last LoadSpaceModel or UpdateSpaceModel call.
 // It uses order=-sys.updatedAt to load recently changed entities first and stops
 // when reaching entities older than the previous update start time.
+//
+// UpdateSpaceModel cannot observe deletions: the CMA has no deletion feed, so deleted
+// entities stay cached. Call RefreshEntity or RefreshEntityOutcome for each entity
+// event (e.g. a webhook), which removes entities Contentful no longer has, or reload
+// with LoadSpaceModel. Archived entities are returned by the CMA like any other and
+// stay cached with StatusArchived, matching LoadSpaceModel.
 func (mc *MigrationClient) UpdateSpaceModel(ctx context.Context, logger *Logger) error {
 	// Serialize updates: concurrent calls would race on LastUpdated and on the
 	// cache map. A waiting caller proceeds with the freshly written cutoff.
@@ -263,21 +272,23 @@ func (mc *MigrationClient) UpdateSpaceModel(ctx context.Context, logger *Logger)
 		LastUpdated:   updateStart,
 	}
 
+	// Carry the previous CDA view over only while a published version exists: drafts
+	// and archived entities have none.
 	for id, entity := range updatedEntries {
-		if previous, ok := spaceModel.Entries[id]; ok && entity.GetPublishingStatus() != StatusDraft {
+		if previous, ok := spaceModel.Entries[id]; ok && hasPublishedVersion(entity) {
 			entity.cdaView = previous.CDAView()
 		}
 		spaceModel.Entries[id] = entity
 	}
 	for id, entity := range updatedAssets {
-		if previous, ok := spaceModel.Assets[id]; ok && entity.GetPublishingStatus() != StatusDraft {
+		if previous, ok := spaceModel.Assets[id]; ok && hasPublishedVersion(entity) {
 			entity.cdaView = previous.CDAView()
 		}
 		spaceModel.Assets[id] = entity
 	}
 	for id, cdaView := range updatedCDAEntries {
 		if cmaEntity, ok := spaceModel.Entries[id]; ok {
-			if entryEntity, ok := cmaEntity.(*EntryEntity); ok {
+			if entryEntity, ok := cmaEntity.(*EntryEntity); ok && !entryEntity.IsArchived() {
 				spaceModel.Entries[id] = &EntryEntity{
 					Entry:   entryEntity.Entry,
 					Client:  entryEntity.Client,
@@ -288,7 +299,7 @@ func (mc *MigrationClient) UpdateSpaceModel(ctx context.Context, logger *Logger)
 	}
 	for id, cdaView := range updatedCDAAssets {
 		if cmaEntity, ok := spaceModel.Assets[id]; ok {
-			if assetEntity, ok := cmaEntity.(*AssetEntity); ok {
+			if assetEntity, ok := cmaEntity.(*AssetEntity); ok && !assetEntity.IsArchived() {
 				spaceModel.Assets[id] = &AssetEntity{
 					Asset:   assetEntity.Asset,
 					Client:  assetEntity.Client,
@@ -302,12 +313,32 @@ func (mc *MigrationClient) UpdateSpaceModel(ctx context.Context, logger *Logger)
 	maps.Copy(newCache, spaceModel.Entries)
 	maps.Copy(newCache, spaceModel.Assets)
 
+	previousCache := mc.cache
 	mc.spaceModel = spaceModel
 	mc.cache = newCache
+	if mc.refIndex != nil {
+		for id, entity := range newCache {
+			if previous, ok := previousCache[id]; !ok || !sameEntityData(previous, entity) {
+				mc.refIndex.reindex(id, entity)
+			}
+		}
+		for id := range previousCache {
+			if _, ok := newCache[id]; !ok {
+				mc.refIndex.remove(id)
+			}
+		}
+	}
 	mc.stats.TotalEntities = len(newCache)
 	mc.cacheMu.Unlock()
 
 	return nil
+}
+
+// hasPublishedVersion reports whether the entity has a published version, i.e. whether
+// a CDA view can exist for it.
+func hasPublishedVersion(entity Entity) bool {
+	status := entity.GetPublishingStatus()
+	return status == StatusPublished || status == StatusChanged
 }
 
 // GetSpaceModel returns the cached space model
@@ -469,14 +500,70 @@ func (mc *MigrationClient) FilterEntities(filters ...EntityFilter) *EntityCollec
 	}
 }
 
-// RefreshEntity updates a single entity in the cache
+// ErrEntityNotFound is matched (errors.Is) by the error RefreshEntity returns when
+// Contentful has the ID neither as entry nor as asset.
+var ErrEntityNotFound = errors.New("entity not found")
+
+// EntityNotFoundError is returned by RefreshEntity when Contentful confirmed that the ID
+// exists neither as entry nor as asset. errors.Is(err, ErrEntityNotFound) matches it.
+type EntityNotFoundError struct {
+	ID string
+}
+
+func (e *EntityNotFoundError) Error() string {
+	return fmt.Sprintf("entity %s not found", e.ID)
+}
+
+// Is makes errors.Is(err, ErrEntityNotFound) match.
+func (e *EntityNotFoundError) Is(target error) bool {
+	return target == ErrEntityNotFound
+}
+
+// RefreshOutcome reports what RefreshEntityOutcome did to the cache.
+type RefreshOutcome string
+
+const (
+	// RefreshOutcomeUpdated means the entity was fetched and (re)placed in the cache.
+	RefreshOutcomeUpdated RefreshOutcome = "updated"
+	// RefreshOutcomeRemoved means Contentful has the ID neither as entry nor as asset,
+	// and any cached entity with that ID was removed.
+	RefreshOutcomeRemoved RefreshOutcome = "removed"
+)
+
+// RefreshEntity updates a single entity in the cache. When Contentful confirms that the
+// ID exists neither as entry nor as asset (both CMA lookups return not found), the stale
+// entity is removed from the cache and an *EntityNotFoundError matching
+// ErrEntityNotFound is returned. On any other failure the cache is left untouched and
+// the error is returned. Use RefreshEntityOutcome to treat removal as success.
 func (mc *MigrationClient) RefreshEntity(ctx context.Context, id string) error {
+	outcome, err := mc.RefreshEntityOutcome(ctx, id)
+	if err != nil {
+		return err
+	}
+	if outcome == RefreshOutcomeRemoved {
+		return &EntityNotFoundError{ID: id}
+	}
+	return nil
+}
+
+// RefreshEntityOutcome fetches the entity from the CMA, trying it as entry first and,
+// only when Contentful reports no such entry, as asset second. It updates the cache:
+//   - found: the entity (and its CDA view, when a CDA client is configured and the
+//     entity is not archived) replaces the cached one; outcome RefreshOutcomeUpdated.
+//   - both lookups not found: the cached entity, if any, is removed; outcome
+//     RefreshOutcomeRemoved with a nil error.
+//   - any other failure of either lookup (network, 5xx, 429, auth): the cache is
+//     untouched and the error is returned. The asset lookup is not attempted after such
+//     an entry failure, even if the ID is a cached asset.
+//
+// Archived entities are found and stay cached, matching LoadSpaceModel.
+func (mc *MigrationClient) RefreshEntityOutcome(ctx context.Context, id string) (RefreshOutcome, error) {
 	// Try to get as entry first
-	entry, err := mc.cma.Entries.Get(ctx, mc.spaceID, id)
-	if err == nil {
+	entry, entryErr := mc.cma.Entries.Get(ctx, mc.spaceID, id)
+	if entryErr == nil {
 		entity := &EntryEntity{Entry: entry, Client: mc}
 		// Fetch CDA view if available (failure is silent — entity may be draft)
-		if mc.cda != nil {
+		if mc.cda != nil && !entity.IsArchived() {
 			if cdaEntry, cdaErr := mc.cda.Entries.Get(ctx, mc.spaceID, id); cdaErr == nil {
 				entity.cdaView = &EntryEntity{Entry: cdaEntry, Client: mc}
 			}
@@ -486,16 +573,23 @@ func (mc *MigrationClient) RefreshEntity(ctx context.Context, id string) error {
 		if mc.spaceModel != nil {
 			mc.spaceModel.Entries[id] = entity
 		}
+		mc.reindexLocked(id)
 		mc.cacheMu.Unlock()
-		return nil
+		return RefreshOutcomeUpdated, nil
+	}
+
+	// Fall through to the asset lookup only when Contentful confirmed there is no such
+	// entry: after any other failure the ID's kind is unknown, so the cache stays as is.
+	if !isNotFound(entryErr) {
+		return "", fmt.Errorf("failed to refresh entity %s as entry: %w", id, entryErr)
 	}
 
 	// Try to get as asset
-	asset, err := mc.cma.Assets.Get(ctx, mc.spaceID, id)
-	if err == nil {
+	asset, assetErr := mc.cma.Assets.Get(ctx, mc.spaceID, id)
+	if assetErr == nil {
 		entity := &AssetEntity{Asset: asset, Client: mc}
 		// Fetch CDA view if available
-		if mc.cda != nil {
+		if mc.cda != nil && !entity.IsArchived() {
 			if cdaAsset, cdaErr := mc.cda.Assets.Get(ctx, mc.spaceID, id); cdaErr == nil {
 				entity.cdaView = &AssetEntity{Asset: cdaAsset, Client: mc}
 			}
@@ -505,11 +599,26 @@ func (mc *MigrationClient) RefreshEntity(ctx context.Context, id string) error {
 		if mc.spaceModel != nil {
 			mc.spaceModel.Assets[id] = entity
 		}
+		mc.reindexLocked(id)
 		mc.cacheMu.Unlock()
-		return nil
+		return RefreshOutcomeUpdated, nil
 	}
 
-	return fmt.Errorf("entity %s not found", id)
+	if !isNotFound(assetErr) {
+		return "", fmt.Errorf("failed to refresh entity %s as asset: %w", id, assetErr)
+	}
+
+	mc.cacheMu.Lock()
+	mc.removeEntityLocked(id)
+	mc.cacheMu.Unlock()
+	return RefreshOutcomeRemoved, nil
+}
+
+// isNotFound reports whether err is the SDK's not-found error, which it returns for
+// Contentful's 404 "NotFound" error responses.
+func isNotFound(err error) bool {
+	var notFound contentful.NotFoundError
+	return errors.As(err, &notFound)
 }
 
 // syncEntityVersion fetches the current sys version for the entity from the CMA
@@ -621,15 +730,25 @@ func isNilEntity(entity Entity) bool {
 	}
 }
 
-// RemoveEntity removes an entity from the cache
+// RemoveEntity removes an entity from the cache. Its outgoing reference edges are
+// dropped; edges pointing at it remain, since its referrers still link to the ID.
 func (mc *MigrationClient) RemoveEntity(id string) {
 	mc.cacheMu.Lock()
+	mc.removeEntityLocked(id)
+	mc.cacheMu.Unlock()
+}
+
+// removeEntityLocked removes id from the cache, the space model and the reference
+// index. The caller holds cacheMu for writing.
+func (mc *MigrationClient) removeEntityLocked(id string) {
 	delete(mc.cache, id)
 	if mc.spaceModel != nil {
 		delete(mc.spaceModel.Entries, id)
 		delete(mc.spaceModel.Assets, id)
 	}
-	mc.cacheMu.Unlock()
+	if mc.refIndex != nil {
+		mc.refIndex.remove(id)
+	}
 }
 
 // loadLocales loads the locales for the space

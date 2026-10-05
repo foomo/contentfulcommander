@@ -39,28 +39,8 @@ func StopAtContentType(ct string) PathOption {
 	}
 }
 
-// entityReferencesIDViaFields checks whether any of the specified fields (across all locales) reference the given ID.
-func entityReferencesIDViaFields(fields map[string]any, targetID string, fieldNames []string) bool {
-	for _, name := range fieldNames {
-		fieldValue, ok := fields[name]
-		if !ok {
-			continue
-		}
-		localeMap, ok := fieldValue.(map[string]any)
-		if !ok {
-			continue
-		}
-		for _, localeValue := range localeMap {
-			if valueReferencesID(localeValue, targetID) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // getReferrerPath walks up the referrer chain through the specified fields and returns the path from root to self.
-func getReferrerPath(client *MigrationClient, startID string, startEntity Entity, fieldNames []string, opts ...PathOption) ([]Entity, error) {
+func getReferrerPath(client *MigrationClient, startEntity Entity, fieldNames []string, opts ...PathOption) ([]Entity, error) {
 	if client == nil || len(fieldNames) == 0 {
 		return []Entity{startEntity}, nil
 	}
@@ -71,45 +51,50 @@ func getReferrerPath(client *MigrationClient, startID string, startEntity Entity
 	}
 
 	path := []Entity{startEntity}
-	visited := map[string]struct{}{startID: {}}
-	currentID := startID
 
-	for {
-		var referrers []Entity
-		for _, entity := range client.cache {
-			if entity.GetID() == currentID {
-				continue
+	var err error
+	client.withReferenceIndex(func(idx *referenceIndex) {
+		// Entity data is read only under the cache lock, where CMA writes are applied.
+		currentID := startEntity.GetID()
+		visited := map[string]struct{}{currentID: {}}
+		for {
+			var referrer Entity
+			for referrerID, slots := range idx.incoming[currentID] {
+				entity, ok := client.cache[referrerID]
+				if !ok || entity.GetID() == currentID || !slotsInFields(slots, fieldNames) {
+					continue
+				}
+				if referrer != nil {
+					err = ErrAmbiguousPath
+					return
+				}
+				referrer = entity
 			}
-			if entityReferencesIDViaFields(entity.GetFields(), currentID, fieldNames) {
-				referrers = append(referrers, entity)
+			if referrer == nil {
+				return
 			}
-		}
 
-		if len(referrers) == 0 {
-			break
-		}
-		if len(referrers) > 1 {
-			return nil, ErrAmbiguousPath
-		}
+			referrerID := referrer.GetID()
+			if _, seen := visited[referrerID]; seen {
+				err = ErrCircularReference
+				return
+			}
 
-		referrer := referrers[0]
-		referrerID := referrer.GetID()
+			visited[referrerID] = struct{}{}
+			path = append(path, referrer)
 
-		if _, seen := visited[referrerID]; seen {
-			return nil, ErrCircularReference
+			if cfg.stopAtEntityID != "" && referrerID == cfg.stopAtEntityID {
+				return
+			}
+			if cfg.stopAtContentType != "" && referrer.GetContentType() == cfg.stopAtContentType {
+				return
+			}
+
+			currentID = referrerID
 		}
-
-		visited[referrerID] = struct{}{}
-		path = append(path, referrer)
-
-		if cfg.stopAtEntityID != "" && referrerID == cfg.stopAtEntityID {
-			break
-		}
-		if cfg.stopAtContentType != "" && referrer.GetContentType() == cfg.stopAtContentType {
-			break
-		}
-
-		currentID = referrerID
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	slices.Reverse(path)
@@ -129,6 +114,23 @@ func isNullOrEmpty(value any) bool {
 		return len(v) == 0
 	}
 	return false
+}
+
+// IsArchived reports whether e is an archived entry or asset. It is nil-safe and, for
+// Entity implementations other than *EntryEntity and *AssetEntity, reads GetSys().
+func IsArchived(e Entity) bool {
+	if isNilEntity(e) {
+		return false
+	}
+	switch typed := e.(type) {
+	case *EntryEntity:
+		return typed.Entry != nil && typed.Entry.Sys != nil && typed.IsArchived()
+	case *AssetEntity:
+		return typed.Asset != nil && typed.Asset.Sys != nil && typed.IsArchived()
+	default:
+		sys := e.GetSys()
+		return sys != nil && sys.ArchivedVersion > 0
+	}
 }
 
 // EntryEntity implementation
@@ -169,7 +171,17 @@ func (ee *EntryEntity) IsPublished() bool {
 	return ee.Entry.Sys.PublishedVersion > 0 && ee.Entry.Sys.Version-ee.Entry.Sys.PublishedVersion == 1
 }
 
+// IsArchived returns true if the entry is archived (Sys.ArchivedVersion > 0).
+func (ee *EntryEntity) IsArchived() bool {
+	return ee.Entry.Sys.ArchivedVersion > 0
+}
+
+// GetPublishingStatus returns StatusArchived, StatusDraft, StatusPublished or
+// StatusChanged. Archived takes precedence over the other statuses.
 func (ee *EntryEntity) GetPublishingStatus() string {
+	if ee.IsArchived() {
+		return StatusArchived
+	}
 	if ee.Entry.Sys.PublishedVersion == 0 {
 		return StatusDraft
 	}
@@ -361,7 +373,22 @@ func (ee *EntryEntity) IsFieldNullOrEmpty(fieldName string, locale Locale) bool 
 	return isNullOrEmpty(ee.GetFieldValue(fieldName, locale))
 }
 
+// SetFieldValue sets the value of a field for a specific locale. When the entry is the
+// cached one, its reference edges are re-extracted. The value is stored as given: later
+// mutation of it is not tracked (see ReindexEntity).
 func (ee *EntryEntity) SetFieldValue(fieldName string, locale Locale, value any) {
+	if ee.Client == nil {
+		ee.setFieldValue(fieldName, locale, value)
+		return
+	}
+	// Mutate under the cache lock: the reference index reads cached entries' fields.
+	ee.Client.cacheMu.Lock()
+	defer ee.Client.cacheMu.Unlock()
+	ee.setFieldValue(fieldName, locale, value)
+	ee.Client.reindexIfCachedLocked(ee)
+}
+
+func (ee *EntryEntity) setFieldValue(fieldName string, locale Locale, value any) {
 	if ee.Entry.Fields == nil {
 		ee.Entry.Fields = make(map[string]any)
 	}
@@ -403,78 +430,14 @@ func (ee *EntryEntity) CDAView() Entity {
 
 // GetReferrerPath walks up the referrer chain through the specified fields and returns the path from root to self.
 func (ee *EntryEntity) GetReferrerPath(fieldNames []string, opts ...PathOption) ([]Entity, error) {
-	return getReferrerPath(ee.Client, ee.GetID(), ee, fieldNames, opts...)
+	return getReferrerPath(ee.Client, ee, fieldNames, opts...)
 }
 
-// GetParents returns all entities that reference this entry.
+// GetParents returns all entities that reference this entry through any field and
+// locale, excluding the entry itself, sorted by ID.
 // If contentTypes is non-nil, only parents matching those content types are returned.
 func (ee *EntryEntity) GetParents(contentTypes []string) *EntityCollection {
-	if ee.Client == nil {
-		return NewEntityCollection(nil)
-	}
-
-	targetID := ee.GetID()
-
-	// Build content type set for fast lookup
-	var ctSet map[string]struct{}
-	if contentTypes != nil {
-		ctSet = make(map[string]struct{}, len(contentTypes))
-		for _, ct := range contentTypes {
-			ctSet[ct] = struct{}{}
-		}
-	}
-
-	var parents []Entity
-	for _, entity := range ee.Client.cache {
-		if entity.GetID() == targetID {
-			continue
-		}
-		if ctSet != nil {
-			if _, ok := ctSet[entity.GetContentType()]; !ok {
-				continue
-			}
-		}
-		if entityReferencesID(entity.GetFields(), targetID) {
-			parents = append(parents, entity)
-		}
-	}
-
-	return NewEntityCollection(parents)
-}
-
-// entityReferencesID checks whether any field value (across all locales) contains a reference to the given ID.
-func entityReferencesID(fields map[string]any, targetID string) bool {
-	for _, fieldValue := range fields {
-		localeMap, ok := fieldValue.(map[string]any)
-		if !ok {
-			continue
-		}
-		for _, localeValue := range localeMap {
-			if valueReferencesID(localeValue, targetID) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// valueReferencesID checks whether a single field value (single ref or array of refs) references the given ID.
-func valueReferencesID(value any, targetID string) bool {
-	switch v := value.(type) {
-	case map[string]any:
-		if sysData, ok := v["sys"].(map[string]any); ok {
-			if id, ok := sysData["id"].(string); ok && id == targetID {
-				return true
-			}
-		}
-	case []any:
-		for _, item := range v {
-			if valueReferencesID(item, targetID) {
-				return true
-			}
-		}
-	}
-	return false
+	return getParents(ee.Client, ee, nil, contentTypes)
 }
 
 // AssetEntity implementation
@@ -515,7 +478,17 @@ func (ae *AssetEntity) IsPublished() bool {
 	return ae.Asset.Sys.PublishedVersion > 0 && ae.Asset.Sys.Version-ae.Asset.Sys.PublishedVersion == 1
 }
 
+// IsArchived returns true if the asset is archived (Sys.ArchivedVersion > 0).
+func (ae *AssetEntity) IsArchived() bool {
+	return ae.Asset.Sys.ArchivedVersion > 0
+}
+
+// GetPublishingStatus returns StatusArchived, StatusDraft, StatusPublished or
+// StatusChanged. Archived takes precedence over the other statuses.
 func (ae *AssetEntity) GetPublishingStatus() string {
+	if ae.IsArchived() {
+		return StatusArchived
+	}
 	if ae.Asset.Sys.PublishedVersion == 0 {
 		return StatusDraft
 	}
@@ -667,40 +640,12 @@ func (ae *AssetEntity) CDAView() Entity {
 
 // GetReferrerPath walks up the referrer chain through the specified fields and returns the path from root to self.
 func (ae *AssetEntity) GetReferrerPath(fieldNames []string, opts ...PathOption) ([]Entity, error) {
-	return getReferrerPath(ae.Client, ae.GetID(), ae, fieldNames, opts...)
+	return getReferrerPath(ae.Client, ae, fieldNames, opts...)
 }
 
-// GetParents returns all entities that reference this asset.
+// GetParents returns all entities that reference this asset through any field and
+// locale, excluding the asset itself, sorted by ID.
 // If contentTypes is non-nil, only parents matching those content types are returned.
 func (ae *AssetEntity) GetParents(contentTypes []string) *EntityCollection {
-	if ae.Client == nil {
-		return NewEntityCollection(nil)
-	}
-
-	targetID := ae.GetID()
-
-	var ctSet map[string]struct{}
-	if contentTypes != nil {
-		ctSet = make(map[string]struct{}, len(contentTypes))
-		for _, ct := range contentTypes {
-			ctSet[ct] = struct{}{}
-		}
-	}
-
-	var parents []Entity
-	for _, entity := range ae.Client.cache {
-		if entity.GetID() == targetID {
-			continue
-		}
-		if ctSet != nil {
-			if _, ok := ctSet[entity.GetContentType()]; !ok {
-				continue
-			}
-		}
-		if entityReferencesID(entity.GetFields(), targetID) {
-			parents = append(parents, entity)
-		}
-	}
-
-	return NewEntityCollection(parents)
+	return getParents(ae.Client, ae, nil, contentTypes)
 }

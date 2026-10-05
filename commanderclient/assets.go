@@ -100,6 +100,7 @@ func (mc *MigrationClient) CreateAssetFromURL(ctx context.Context, id, assetURL,
 	if mc.spaceModel != nil {
 		mc.spaceModel.Assets[entity.GetID()] = entity
 	}
+	mc.reindexLocked(entity.GetID())
 	mc.cacheMu.Unlock()
 
 	return entity, nil

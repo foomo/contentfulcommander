@@ -12,6 +12,9 @@ const (
 	StatusDraft     = "draft"
 	StatusPublished = "published"
 	StatusChanged   = "changed"
+	// StatusArchived is reported for archived entities (Sys.ArchivedVersion > 0) and
+	// takes precedence over the other statuses.
+	StatusArchived = "archived"
 )
 
 // Migration operation constants

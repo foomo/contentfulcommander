@@ -76,7 +76,7 @@ func (mc *MigrationClient) loadCDAEntries(ctx context.Context, spaceModel *Space
 	matched := 0
 	for _, entry := range entries {
 		if cmaEntity, ok := spaceModel.Entries[entry.Sys.ID]; ok {
-			if ee, ok := cmaEntity.(*EntryEntity); ok {
+			if ee, ok := cmaEntity.(*EntryEntity); ok && !ee.IsArchived() {
 				ee.cdaView = &EntryEntity{Entry: &entry, Client: mc}
 				matched++
 			}
@@ -197,7 +197,7 @@ func (mc *MigrationClient) loadCDAAssets(ctx context.Context, spaceModel *SpaceM
 	matched := 0
 	for _, asset := range assets.Items {
 		if cmaEntity, ok := spaceModel.Assets[asset.Sys.ID]; ok {
-			if ae, ok := cmaEntity.(*AssetEntity); ok {
+			if ae, ok := cmaEntity.(*AssetEntity); ok && !ae.IsArchived() {
 				ae.cdaView = &AssetEntity{Asset: &asset, Client: mc}
 				matched++
 			}
