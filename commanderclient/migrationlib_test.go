@@ -496,6 +496,8 @@ func TestGetParents(t *testing.T) {
 			Client: client,
 		}
 		client.cache["parent-de"] = parentDE
+		// Direct cache writes bypass index maintenance.
+		client.RebuildReferenceIndex()
 
 		parents := target.GetParents(nil)
 		if parents.Count() != 3 {
@@ -504,6 +506,7 @@ func TestGetParents(t *testing.T) {
 
 		// Clean up
 		delete(client.cache, "parent-de")
+		client.RebuildReferenceIndex()
 	})
 }
 

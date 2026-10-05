@@ -84,7 +84,7 @@ type Entity interface {
     GetUpdatedAt() time.Time
     GetVersion() int
     IsPublished() bool
-    GetPublishingStatus() string  // "draft", "published", or "changed"
+    GetPublishingStatus() string  // "draft", "published", "changed", or "archived"
 
     // Field access methods
     GetFields() map[string]any
@@ -112,7 +112,7 @@ type Entity interface {
     GetFile(locale Locale) *contentful.File
 
     // Graph traversal
-    GetParents(contentTypes []string) *EntityCollection               // direct referrers
+    GetParents(contentTypes []string) *EntityCollection               // direct referrers, sorted by ID
     GetReferrerPath(fieldNames []string, opts ...PathOption) ([]Entity, error) // full referrer chain (root → self)
 
     // CDA (Content Delivery API) view
@@ -131,15 +131,24 @@ type Entity interface {
 
 The library provides accurate publishing status detection based on Contentful's versioning system:
 
+- **Archived**: `ArchivedVersion > 0` — takes precedence over every other status
 - **Draft**: `PublishedVersion == 0` (never been published)
 - **Published**: `Version - PublishedVersion == 1` (current published version)
 - **Changed**: `Version - PublishedVersion > 1` (has unpublished changes)
 
 ```go
 entity := client.GetEntity("some-id")
-status := entity.GetPublishingStatus() // "draft", "published", or "changed"
+status := entity.GetPublishingStatus() // "archived", "draft", "published", or "changed"
 isPublished := entity.IsPublished()     // true only if status == "published"
+
+archived := commanderclient.IsArchived(entity) // nil-safe helper for Entity values
+archived = entryEntity.IsArchived()            // also on *EntryEntity and *AssetEntity
 ```
+
+Archived entities are part of the cache: the CMA collections that `LoadSpaceModel` reads return
+them (the loader sends no `sys.archivedAt` filter), and `UpdateSpaceModel` and `RefreshEntity` keep
+them as well. An archived entity has no published version, so it never carries a CDA view. Filter
+them out with `commanderclient.IsArchived` when an integrity check needs live content only.
 
 ### CDA Views
 
@@ -240,6 +249,23 @@ How it works:
 - Entities are fetched in pages of 100, ordered by `-sys.updatedAt` (most recently changed first)
 - Pagination stops as soon as the oldest entity on a page is older than the previous update start time; entities with the exact cutoff timestamp are refreshed again to avoid missing rounded timestamps
 - Entries and assets are updated concurrently; CDA views are refreshed in a second phase if a CDA key is configured
+- **Deletions are not observed**: the CMA has no deletion feed, so `UpdateSpaceModel` never removes entities. Refresh single entities for each event that names one (e.g. a webhook), or reload
+
+```go
+// Refresh one entity, e.g. from a webhook. Removal is reported as an outcome, not an error.
+outcome, err := client.RefreshEntityOutcome(ctx, id)
+switch {
+case err != nil:
+    // network, 5xx, 429, auth: the cache was left untouched
+case outcome == commanderclient.RefreshOutcomeRemoved:
+    // Contentful has the ID neither as entry nor as asset; it was removed from the cache
+}
+
+// RefreshEntity reports the removal as an error matching ErrEntityNotFound
+if err := client.RefreshEntity(ctx, id); errors.Is(err, commanderclient.ErrEntityNotFound) {
+    // removed from the cache
+}
+```
 
 ### Collection Operations
 
@@ -346,7 +372,37 @@ allParents := entity.GetParents(nil)
 
 // Filter parents by content type
 pageParents := entity.GetParents([]string{"page", "landingPage"})
+
+// Only parents linking through specific fields (nil or empty = any field)
+treeParents := entryEntity.GetParentsViaFields([]string{"children"}, nil)
+
+// Every edge pointing at an ID, also when the ID is not cached (dangling links)
+for _, ref := range client.GetReferrers("node-x", commanderclient.ReferrerFilter{
+    FieldNames:   []string{"children"}, // empty = any field
+    ContentTypes: []string{"section"},  // empty = any content type
+}) {
+    fmt.Println(ref.Entity.GetID(), ref.FieldName, ref.Locale)
+}
 ```
+
+A reference is a field value that is a map whose `sys` map has a string `id`, or an array of such
+values, in any field and any locale. Rich-text documents and other nested objects are not searched.
+`GetParents` and `GetParentsViaFields` return distinct entities without the entity itself, sorted by
+ID. `GetReferrers` returns one `Referrer` per (referrer, field, locale), including self-references —
+an entity linking to itself is a legitimate finding there — sorted by referrer ID, field and locale.
+
+#### Reverse-reference index
+
+Reverse lookups (`GetParents`, `GetParentsViaFields`, `GetReferrers`, `GetReferrerPath`) are answered
+from an index that is built on the first reverse query (about 0.5 s for 100k entries) and maintained
+incrementally afterwards. Clients that never ask for referrers do not pay for it. The index is kept
+consistent by `LoadSpaceModel`, `UpdateSpaceModel`, `RefreshEntity`/`RefreshEntityOutcome`,
+`RemoveEntity`, `CreateAssetFromURL`, `SaveDraft`, `Publish`, the `MigrationExecutor` operations and
+`EntryEntity.SetFieldValue` on a cached entry.
+
+Edits the library cannot see are not tracked: writes to `Entry.Fields` or to the maps returned by
+`GetFields`/`GetFieldValue`, and later mutation of a value passed to `SetFieldValue`. Call
+`client.ReindexEntity(entity)` after such an edit, or `client.RebuildReferenceIndex()` after bulk edits.
 
 ### Referrer Path Traversal
 
@@ -1143,6 +1199,7 @@ log.Printf("Processed %d entities with %d errors",
 - **Incremental updates**: Use `UpdateSpaceModel` instead of `LoadSpaceModel` to refresh only recently changed entities — significantly faster for large spaces with infrequent changes
 - **Concurrent loading**: Entries and assets are loaded in parallel for faster initialization. Initial entry loading is split by content type, starts with 1000-entry pages, and halves the page size only for content types that hit Contentful response-size limits. When a CDA key is provided, CDA views are loaded in a second concurrent phase after CMA data
 - **Skip assets or entries**: Set `Config.SkipAssets = true` for entry-only migrations, or `Config.SkipEntries = true` for asset-only migrations — each skips the other kind's CMA and CDA load entirely
+- **Reverse lookups**: `GetParents`/`GetReferrers` use a lazily built index — microseconds per lookup instead of a full cache scan; the index needs roughly 10% of the cache's memory
 - **Concurrent batch execution**: `ExecuteBatch` runs operations concurrently (default: 3 parallel API calls, configurable via `client.SetConcurrency(n)`)
 - Use appropriate batch sizes for large operations
 - Consider using dry-run mode for testing

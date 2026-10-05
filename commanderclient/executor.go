@@ -264,23 +264,14 @@ func (me *MigrationExecutor) writeWithVersionRetry(ctx context.Context, entity E
 	return write()
 }
 
-// upsertEntity updates an entity with new fields.
-// The SDK's Upsert decodes the API response into the entry/asset struct in-place,
-// so there is no need to re-fetch — the entity already carries the updated version.
+// upsertEntity persists the entity's in-memory fields.
+// The SDK's Upsert decodes the API response into the struct it writes, and writeDetached
+// applies that to the entity, so there is no need to re-fetch — the entity already
+// carries the updated version.
 func (me *MigrationExecutor) upsertEntity(ctx context.Context, op *MigrationOperation) (bool, error) {
 	if op.Entity.GetType() == "Entry" {
-		entryEntity := op.Entity.(*EntryEntity)
-		entry := entryEntity.Entry
-
-		// Update fields from entity
-		fields := op.Entity.GetFields()
-		if fields != nil {
-			entry.Fields = fields
-		}
-
-		// Update the entry (SDK updates entry.Sys.Version in-place from the response)
-		err := me.writeWithVersionRetry(ctx, op.Entity, func() error {
-			return me.client.cma.Entries.Upsert(ctx, me.client.spaceID, entry)
+		err := me.writeDetached(ctx, op.Entity, true, func(work Entity) error {
+			return me.client.cma.Entries.Upsert(ctx, me.client.spaceID, work.(*EntryEntity).Entry)
 		})
 		if err != nil {
 			return false, err
@@ -289,28 +280,8 @@ func (me *MigrationExecutor) upsertEntity(ctx context.Context, op *MigrationOper
 		return true, nil
 
 	} else if op.Entity.GetType() == "Asset" {
-		assetEntity := op.Entity.(*AssetEntity)
-		asset := assetEntity.Asset
-
-		// Update fields from entity
-		fields := op.Entity.GetFields()
-		if fields != nil {
-			// Handle asset field updates
-			if titleField, exists := fields["title"]; exists {
-				if titleMap, ok := titleField.(map[string]string); ok {
-					asset.Fields.Title = titleMap
-				}
-			}
-			if descField, exists := fields["description"]; exists {
-				if descMap, ok := descField.(map[string]string); ok {
-					asset.Fields.Description = descMap
-				}
-			}
-		}
-
-		// Update the asset (SDK updates asset.Sys.Version in-place from the response)
-		err := me.writeWithVersionRetry(ctx, op.Entity, func() error {
-			return me.client.cma.Assets.Upsert(ctx, me.client.spaceID, asset)
+		err := me.writeDetached(ctx, op.Entity, true, func(work Entity) error {
+			return me.client.cma.Assets.Upsert(ctx, me.client.spaceID, work.(*AssetEntity).Asset)
 		})
 		if err != nil {
 			return false, err
@@ -353,11 +324,8 @@ func (me *MigrationExecutor) upsertPublishEntity(ctx context.Context, op *Migrat
 // publishEntity publishes an entity
 func (me *MigrationExecutor) publishEntity(ctx context.Context, op *MigrationOperation) (bool, error) {
 	if op.Entity.GetType() == "Entry" {
-		entryEntity := op.Entity.(*EntryEntity)
-		entry := entryEntity.Entry
-
-		err := me.writeWithVersionRetry(ctx, op.Entity, func() error {
-			return me.client.cma.Entries.Publish(ctx, me.client.spaceID, entry)
+		err := me.writeDetached(ctx, op.Entity, false, func(work Entity) error {
+			return me.client.cma.Entries.Publish(ctx, me.client.spaceID, work.(*EntryEntity).Entry)
 		})
 		if err != nil {
 			return false, err
@@ -372,13 +340,9 @@ func (me *MigrationExecutor) publishEntity(ctx context.Context, op *MigrationOpe
 		return true, nil
 
 	} else if op.Entity.GetType() == "Asset" {
-		assetEntity := op.Entity.(*AssetEntity)
-		asset := assetEntity.Asset
-
-		// Assets.Publish updates the struct in-place, so no refresh is strictly needed,
-		// but we refresh to keep the cache consistent.
-		err := me.writeWithVersionRetry(ctx, op.Entity, func() error {
-			return me.client.cma.Assets.Publish(ctx, me.client.spaceID, asset)
+		// Assets.Publish decodes the response, so no refresh is needed.
+		err := me.writeDetached(ctx, op.Entity, true, func(work Entity) error {
+			return me.client.cma.Assets.Publish(ctx, me.client.spaceID, work.(*AssetEntity).Asset)
 		})
 		if err != nil {
 			return false, err
@@ -393,11 +357,8 @@ func (me *MigrationExecutor) publishEntity(ctx context.Context, op *MigrationOpe
 // unpublishEntity unpublishes an entity
 func (me *MigrationExecutor) unpublishEntity(ctx context.Context, op *MigrationOperation) (bool, error) {
 	if op.Entity.GetType() == "Entry" {
-		entryEntity := op.Entity.(*EntryEntity)
-		entry := entryEntity.Entry
-
-		err := me.writeWithVersionRetry(ctx, op.Entity, func() error {
-			return me.client.cma.Entries.Unpublish(ctx, me.client.spaceID, entry)
+		err := me.writeDetached(ctx, op.Entity, false, func(work Entity) error {
+			return me.client.cma.Entries.Unpublish(ctx, me.client.spaceID, work.(*EntryEntity).Entry)
 		})
 		if err != nil {
 			return false, err
@@ -410,12 +371,9 @@ func (me *MigrationExecutor) unpublishEntity(ctx context.Context, op *MigrationO
 		return true, nil
 
 	} else if op.Entity.GetType() == "Asset" {
-		assetEntity := op.Entity.(*AssetEntity)
-		asset := assetEntity.Asset
-
-		// Assets.Unpublish updates the struct in-place.
-		err := me.writeWithVersionRetry(ctx, op.Entity, func() error {
-			return me.client.cma.Assets.Unpublish(ctx, me.client.spaceID, asset)
+		// Assets.Unpublish decodes the response.
+		err := me.writeDetached(ctx, op.Entity, true, func(work Entity) error {
+			return me.client.cma.Assets.Unpublish(ctx, me.client.spaceID, work.(*AssetEntity).Asset)
 		})
 		if err != nil {
 			return false, err
