@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased (suggested: v0.8.0)
+## v0.8.1
+
+### Added
+
+- `MigrationClient.SaveDraftIfCurrent(ctx, entity)`: saves like `SaveDraft`, but only on top of the
+  version the entity holds. On a version conflict it returns an error wrapping
+  `contentful.VersionMismatchError` and leaves the entity as it was. `SaveDraft` retries a conflict on
+  the refreshed version with the fields it holds, which writes a cached entity's stale fields over
+  edits made since it was cached; `SaveDraftIfCurrent` lets a caller refresh and decide instead.
+
+## v0.8.0
 
 ### Added
 

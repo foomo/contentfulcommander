@@ -37,6 +37,9 @@ type MigrationExecutor struct {
 	options   *MigrationOptions
 	results   []MigrationResult
 	resultsMu sync.Mutex
+	// surfaceVersionConflicts returns a version conflict instead of retrying the
+	// write on the refreshed version (see SaveDraftIfCurrent).
+	surfaceVersionConflicts bool
 }
 
 // NewMigrationExecutor creates a new migration executor
@@ -251,11 +254,12 @@ func (me *MigrationExecutor) GetErrorCount() int {
 // writeWithVersionRetry runs a CMA write and, on a Contentful version conflict
 // (HTTP 409), re-fetches the entity's current version from the server and retries
 // the write exactly once. Only Sys.Version/PublishedVersion are refreshed, so
-// locally-edited fields are preserved across the retry.
+// locally-edited fields are preserved across the retry. An executor that surfaces
+// version conflicts returns the conflict instead.
 func (me *MigrationExecutor) writeWithVersionRetry(ctx context.Context, entity Entity, write func() error) error {
 	err := write()
 	var mismatch contentful.VersionMismatchError
-	if err == nil || !errors.As(err, &mismatch) {
+	if err == nil || me.surfaceVersionConflicts || !errors.As(err, &mismatch) {
 		return err
 	}
 	if syncErr := me.client.syncEntityVersion(ctx, entity); syncErr != nil {
