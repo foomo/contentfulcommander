@@ -163,3 +163,59 @@ func TestPublishDoesNotRetryNonConflictError(t *testing.T) {
 	assert.Equal(t, 1, publishPUTs, "non-conflict errors must not be retried")
 	assert.Equal(t, 0, gets, "non-conflict errors must not trigger a version refresh")
 }
+
+func TestSaveDraftIfCurrentSurfacesVersionConflict(t *testing.T) {
+	var upsertPUTs, gets int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			gets++
+			_, _ = io.WriteString(w, entryJSON("e5", 9))
+		case r.Method == http.MethodPut && !isPublish(r):
+			upsertPUTs++
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, versionMismatchBody)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := newMigrationClient("test-key", "", "test-space", "master")
+	client.cma.SetBaseURL(server.URL)
+
+	entity := newConflictTestEntry("e5")
+	err := client.SaveDraftIfCurrent(context.Background(), entity)
+
+	require.Error(t, err)
+	var mismatch contentful.VersionMismatchError
+	require.ErrorAs(t, err, &mismatch, "the surfaced error should be a version mismatch")
+	assert.Equal(t, 1, upsertPUTs, "a conflict must not be retried with the held fields")
+	assert.Equal(t, 0, gets, "a conflict must not refresh the version")
+	assert.Equal(t, 2, entity.Entry.Sys.Version, "the entity keeps its version")
+	assert.Equal(t, map[string]any{"en-US": "edited"}, entity.Entry.Fields["title"], "the entity keeps its fields")
+}
+
+func TestSaveDraftIfCurrentSavesOnTheHeldVersion(t *testing.T) {
+	var versionHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPut && !isPublish(r):
+			versionHeader = r.Header.Get("X-Contentful-Version")
+			_, _ = io.WriteString(w, entryJSON("e6", 3))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := newMigrationClient("test-key", "", "test-space", "master")
+	client.cma.SetBaseURL(server.URL)
+
+	entity := newConflictTestEntry("e6")
+	err := client.SaveDraftIfCurrent(context.Background(), entity)
+
+	require.NoError(t, err)
+	assert.Equal(t, "2", versionHeader, "the write must name the held version")
+	assert.Equal(t, 3, entity.Entry.Sys.Version, "the saved version is applied to the entity")
+}

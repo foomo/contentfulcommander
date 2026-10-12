@@ -665,6 +665,32 @@ func (mc *MigrationClient) SaveDraft(ctx context.Context, entity Entity) error {
 	return nil
 }
 
+// SaveDraftIfCurrent persists the current in-memory entity fields without
+// publishing, like SaveDraft, but only on top of the version the entity holds.
+// When Contentful has a newer version it does not retry: the error wraps
+// contentful.VersionMismatchError, and the entity is left as it was.
+//
+// Use it when the fields come from a cache that may be behind Contentful.
+// SaveDraft retries a conflict on the refreshed version with the fields it holds,
+// so it would write them over edits made since the entity was cached.
+func (mc *MigrationClient) SaveDraftIfCurrent(ctx context.Context, entity Entity) error {
+	if err := mc.validateEntityMutation(entity); err != nil {
+		return err
+	}
+
+	executor := NewMigrationExecutor(mc, &MigrationOptions{DryRun: false, Confirm: false})
+	executor.surfaceVersionConflicts = true
+	_, err := executor.upsertEntity(ctx, &MigrationOperation{
+		EntityID:  entity.GetID(),
+		Operation: OperationUpsert,
+		Entity:    entity,
+	})
+	if err != nil {
+		return fmt.Errorf("save draft failed for %s %q: %w", entity.GetType(), entity.GetID(), err)
+	}
+	return nil
+}
+
 // Publish publishes the entity. It does not persist unsaved in-memory field
 // edits — call SaveDraft first if the entity has been modified.
 func (mc *MigrationClient) Publish(ctx context.Context, entity Entity) error {
