@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.8.2
+
+### Fixed
+
+- `RichTextToMarkdown` drops a heading without text, as it drops an empty paragraph. It wrote one as a
+  bare marker (`## `), which `MarkdownToRichText` reads back as a paragraph holding the marker as text,
+  so a round trip turned an empty heading, a common leftover of editing, into a visible `##`.
+
 ## v0.8.1
 
 ### Added

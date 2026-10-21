@@ -569,6 +569,32 @@ func TestRichTextToMarkdownHeadingNewlineWarns(t *testing.T) {
 	}
 }
 
+func TestRichTextToMarkdownDropsEmptyHeading(t *testing.T) {
+	heading := func(value string) *RichTextNode {
+		return &RichTextNode{NodeType: nodeTypeHeading2, Data: map[string]any{}, Content: []*RichTextNode{richTextTextNode(value)}}
+	}
+	paragraph := &RichTextNode{NodeType: nodeTypeParagraph, Data: map[string]any{}, Content: []*RichTextNode{richTextTextNode("Text")}}
+	doc := &RichTextNode{
+		NodeType: nodeTypeDocument,
+		Data:     map[string]any{},
+		Content: []*RichTextNode{
+			paragraph,
+			heading(""),
+			heading(" \n"),
+			{NodeType: nodeTypeParagraph, Data: map[string]any{}, Content: []*RichTextNode{richTextTextNode("")}},
+		},
+	}
+
+	markdown, warnings, err := RichTextToMarkdown(doc)
+	if err != nil {
+		t.Fatalf("RichTextToMarkdown returned error: %v", err)
+	}
+	if markdown != "Text" || len(warnings) != 0 {
+		t.Fatalf("expected the empty headings to be dropped without warnings, got %q, %#v", markdown, warnings)
+	}
+	assertRichTextRoundTrip(t, &RichTextNode{NodeType: nodeTypeDocument, Data: map[string]any{}, Content: []*RichTextNode{paragraph}})
+}
+
 func findTextNode(nodes []*RichTextNode, value string) *RichTextNode {
 	for _, n := range nodes {
 		if n.Value == value {

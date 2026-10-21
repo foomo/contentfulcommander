@@ -599,6 +599,12 @@ func richTextBlockToMarkdown(node *RichTextNode) (string, []string) {
 	case nodeTypeHeading1, nodeTypeHeading2, nodeTypeHeading3:
 		level := strings.TrimPrefix(node.NodeType, "heading-")
 		text, warnings := richTextInlineToMarkdown(node.Content)
+		if strings.TrimSpace(text) == "" {
+			// An empty heading, a leftover of editing, says nothing, like an empty
+			// paragraph. Written as a bare marker it would read back as a paragraph
+			// holding the marker as text.
+			return "", warnings
+		}
 		if strings.Contains(text, "\n") {
 			text = strings.ReplaceAll(text, "\n", " ")
 			warnings = append(warnings, fmt.Sprintf("line break in %q node rendered as a space", node.NodeType))
