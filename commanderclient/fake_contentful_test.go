@@ -38,6 +38,7 @@ type fakeContentful struct {
 	assets       map[string]*contentful.Asset
 	faults       map[string]fakeFault
 	cdaRequests  []string
+	created      int // entries created with a generated ID
 }
 
 func newFakeContentful(t *testing.T) *fakeContentful {
@@ -133,6 +134,10 @@ func (f *fakeContentful) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.Method == http.MethodPut && !cda && strings.HasPrefix(resource, "entries/") {
 		return f.upsertEntry(r, strings.TrimPrefix(resource, "entries/")), nil
 	}
+	if r.Method == http.MethodPost && !cda && resource == "entries" {
+		f.created++
+		return f.createEntry(r, fmt.Sprintf("generated%d", f.created)), nil
+	}
 	if r.Method != http.MethodGet {
 		f.t.Errorf("unexpected request %s %s", r.Method, r.URL)
 		return fakeError(r, http.StatusMethodNotAllowed), nil
@@ -197,17 +202,19 @@ func (f *fakeContentful) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 }
 
-// upsertEntry stores the PUT fields of an existing entry as its new draft version.
+// upsertEntry stores the PUT fields of an existing entry as its new draft version. A
+// PUT naming a new ID creates the entry, as the CMA does; on an existing entry the CMA
+// answers a create (version 0) with a version mismatch.
 func (f *fakeContentful) upsertEntry(r *http.Request, id string) *http.Response {
 	current, ok := f.entries[id]
 	if !ok {
-		return fakeError(r, http.StatusNotFound)
+		return f.createEntry(r, id)
 	}
-	var body struct {
-		Fields map[string]any `json:"fields"`
+	if r.Header.Get("X-Contentful-Version") == "0" {
+		return fakeResponse(r, http.StatusConflict, `{"sys":{"type":"Error","id":"VersionMismatch"}}`)
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		f.t.Errorf("decode upsert body: %v", err)
+	body, ok := f.decodeEntryBody(r)
+	if !ok {
 		return fakeError(r, http.StatusInternalServerError)
 	}
 	sys := *current.Sys
@@ -216,6 +223,43 @@ func (f *fakeContentful) upsertEntry(r *http.Request, id string) *http.Response 
 	updated := &contentful.Entry{Sys: &sys, Fields: body.Fields}
 	f.entries[id] = updated
 	return fakeJSON(r, updated)
+}
+
+// createEntry stores a new draft entry of the content type the request names.
+func (f *fakeContentful) createEntry(r *http.Request, id string) *http.Response {
+	contentType := r.Header.Get("X-Contentful-Content-Type")
+	if !slices.Contains(f.contentTypes, contentType) {
+		return fakeResponse(r, http.StatusUnprocessableEntity, `{"sys":{"type":"Error","id":"UnknownContentType"},"message":"fake 422"}`)
+	}
+	body, ok := f.decodeEntryBody(r)
+	if !ok {
+		return fakeError(r, http.StatusInternalServerError)
+	}
+	now := fakeTimestamp(time.Now())
+	created := &contentful.Entry{
+		Sys: &contentful.Sys{
+			ID:          id,
+			Type:        "Entry",
+			Version:     1,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+			ContentType: &contentful.ContentType{Sys: &contentful.Sys{ID: contentType, Type: "Link", LinkType: "ContentType"}},
+		},
+		Fields: body.Fields,
+	}
+	f.entries[id] = created
+	return fakeJSON(r, created)
+}
+
+func (f *fakeContentful) decodeEntryBody(r *http.Request) (body struct {
+	Fields map[string]any `json:"fields"`
+}, ok bool,
+) {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		f.t.Errorf("decode entry body: %v", err)
+		return body, false
+	}
+	return body, true
 }
 
 func sortFakeItems[T any](items []T, order string, sys func(T) *contentful.Sys) {
