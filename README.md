@@ -26,6 +26,7 @@ A Go library for Contentful migrations that provides a high-level interface for 
 - **Collection Operations**: Chain operations like filtering, mapping, grouping, and reducing
 - **Migration Execution**: Execute batch operations with dry-run support, concurrent execution, and comprehensive error handling
 - **Asset Creation**: Create assets from a remote URL with `CreateAssetFromURL`, which handles the upload/process/wait cycle
+- **Entry Creation**: Create draft entries with `CreateEntry`, cached and indexed right away
 - **DeepL Translation**: Built-in DeepL API integration for automated field translation with cost tracking
 - **Basic RichText Markdown Conversion**: Convert supported Contentful RichText documents to/from a safe Markdown subset
 - **Incremental Cache Updates**: Efficiently refresh only recently changed entities using `UpdateSpaceModel`, ordered by `-sys.updatedAt`
@@ -397,7 +398,7 @@ Reverse lookups (`GetParents`, `GetParentsViaFields`, `GetReferrers`, `GetReferr
 from an index that is built on the first reverse query (about 0.5 s for 100k entries) and maintained
 incrementally afterwards. Clients that never ask for referrers do not pay for it. The index is kept
 consistent by `LoadSpaceModel`, `UpdateSpaceModel`, `RefreshEntity`/`RefreshEntityOutcome`,
-`RemoveEntity`, `CreateAssetFromURL`, `SaveDraft`, `Publish`, the `MigrationExecutor` operations and
+`RemoveEntity`, `CreateAssetFromURL`, `CreateEntry`, `SaveDraft`, `Publish`, the `MigrationExecutor` operations and
 `EntryEntity.SetFieldValue` on a cached entry.
 
 Edits the library cannot see are not tracked: writes to `Entry.Fields` or to the maps returned by
@@ -871,6 +872,29 @@ if err := client.Publish(ctx, entity); err != nil {
 ```
 
 `SaveDraft` uses the same persistence behavior as `OperationUpsert`, and `Publish` uses the same publish behavior as `OperationPublish`, without dry-run or interactive confirmation.
+
+### Creating Entries
+
+`CreateEntry` creates a draft entry and adds it to the cache, so `GetEntity`, filters and reverse
+queries see it without a refresh:
+
+```go
+entry, err := client.CreateEntry(ctx,
+    "",       // entry ID — empty lets Contentful generate one
+    "teaser", // content type
+    map[string]map[commanderclient.Locale]any{
+        "title": {"de": "Regenjacken Damen"},
+    },
+)
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println("created", entry.GetID())
+```
+
+It never publishes; call `Publish` when the entry should go live. Contentful validates the field IDs and
+locales on create, while required fields and other validations apply only at publish. Creating over an
+existing ID is an error; use `SaveDraft` to change an existing entry.
 
 ### Creating Assets from a URL
 

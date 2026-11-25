@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `MigrationClient.CreateEntry(ctx, id, contentType, fields)`: creates a draft entry, with an ID
+  Contentful generates when `id` is empty, and adds it to the cache and the reverse-reference index,
+  so lookups and reverse queries see it without a refresh. It never publishes. Creating over an
+  existing ID is an error, as for `CreateAssetFromURL`.
+
 ## v0.8.2
 
 ### Fixed
